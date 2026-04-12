@@ -1,6 +1,6 @@
 """
-BOQ Extractor Pro v13.0 - Region-Based Crop Extraction
-PDF to Excel/CSV Converter with Interactive Area Selection
+BOQ Extractor Pro v13.1 - Region-Based Crop Extraction (Fixed)
+PDF to Excel/CSV Converter with Interactive Area Selection & Adjustable Preview
 """
 
 import streamlit as st
@@ -222,6 +222,13 @@ def load_css():
             border-top: 1px solid #eee;
             margin-top: 3rem;
         }
+        
+        .crop-preview-large {
+            max-width: 100%;
+            border: 2px solid #667eea;
+            border-radius: 8px;
+            margin-top: 10px;
+        }
     </style>
     """, unsafe_allow_html=True)
 
@@ -387,10 +394,11 @@ class BOQParser:
 # PDF PROCESSING FUNCTIONS
 # =============================================================================
 
-def render_pdf_page(pdf_file, page_num, crop_box=None):
+def render_pdf_page(pdf_file, page_num, crop_box=None, zoom_level=2.0):
     """
     Render PDF page with optional crop box overlay.
     crop_box: (x1, y1, x2, y2) in percentages
+    zoom_level: Multiplier for resolution (1.0 = default, 2.0 = 2x, etc.)
     """
     try:
         pdf_file.seek(0)
@@ -412,18 +420,26 @@ def render_pdf_page(pdf_file, page_num, crop_box=None):
             x2 = width * (x2_pct / 100)
             y2 = height * (y2_pct / 100)
             
-            # Draw crop rectangle
+            # Draw crop rectangle - FIXED: removed opacity parameter
             crop_rect = fitz.Rect(x1, y1, x2, y2)
+            # Draw border only (no fill to avoid opacity issue)
             page.draw_rect(crop_rect, color=(1, 0.2, 0.2), width=3)  # Red border
-            page.draw_rect(crop_rect, color=(1, 0.2, 0.2), fill=(1, 0.2, 0.2), opacity=0.1)  # Light fill
+            
+            # Add semi-transparent fill using a separate shape approach
+            # Create a shape for the semi-transparent fill
+            shape = page.new_shape()
+            shape.draw_rect(crop_rect)
+            # Light red fill with transparency (color values 0-1, alpha 0.1)
+            shape.finish(color=(1, 0.2, 0.2), fill=(1, 0.8, 0.8), fill_opacity=0.3)
+            shape.commit()
             
             # Add label
             label_point = fitz.Point(x1 + 5, y1 - 5)
             page.insert_text(label_point, "EXTRACTION AREA", 
                            fontsize=14, color=(1, 0.2, 0.2), fontname="helv")
         
-        # Render
-        mat = fitz.Matrix(1.5, 1.5)  # Higher resolution
+        # Render with configurable zoom
+        mat = fitz.Matrix(zoom_level, zoom_level)
         pix = page.get_pixmap(matrix=mat)
         img_data = pix.tobytes("png")
         
@@ -596,11 +612,11 @@ def main():
     # Header
     st.markdown("""
     <div class="main-header">
-        <h1>📋 BOQ Extractor Pro v13.0</h1>
+        <h1>📋 BOQ Extractor Pro v13.1</h1>
         <p>Crop Region-based PDF to Excel/CSV Converter</p>
         <div class="badge-container">
             <span class="feature-badge">🎯 Crop Region Selection</span>
-            <span class="feature-badge">📄 Smart Text Parsing</span>
+            <span class="feature-badge">🔍 Large Preview</span>
             <span class="feature-badge">📊 Excel/CSV Export</span>
             <span class="feature-badge">👁️ Live Preview</span>
         </div>
@@ -616,6 +632,8 @@ def main():
         st.session_state.crop_coords = (50, 10, 95, 50)  # Default: right side, upper portion
     if 'preview_text' not in st.session_state:
         st.session_state.preview_text = ""
+    if 'zoom_level' not in st.session_state:
+        st.session_state.zoom_level = 2.0
     
     # Sidebar controls
     with st.sidebar:
@@ -641,6 +659,17 @@ def main():
             
         current_crop = (x1, y1, x2, y2)
         st.session_state.crop_coords = current_crop
+        
+        st.markdown("---")
+        
+        st.markdown("### 🔍 Preview Settings")
+        zoom_level = st.select_slider(
+            "Preview Zoom Level",
+            options=[1.0, 1.5, 2.0, 2.5, 3.0],
+            value=st.session_state.zoom_level,
+            format_func=lambda x: f"{x}x"
+        )
+        st.session_state.zoom_level = zoom_level
         
         st.markdown("---")
         
@@ -692,17 +721,19 @@ def main():
         st.markdown("<div class='section-header'><h3>🎯 Region Preview</h3></div>", unsafe_allow_html=True)
         
         with st.spinner("Rendering preview..."):
-            img_data, error = render_pdf_page(uploaded_file, preview_page, current_crop)
+            img_data, error = render_pdf_page(uploaded_file, preview_page, current_crop, zoom_level)
             
             if error:
                 st.error(f"Error: {error}")
             else:
-                col_img, col_text = st.columns([3, 2])
+                # Use full width for larger preview
+                st.markdown("### 📄 Page Preview with Crop Area")
+                st.image(img_data, caption=f"Page {preview_page} - Red box shows extraction area (Zoom: {zoom_level}x)", use_column_width=True)
                 
-                with col_img:
-                    st.image(img_data, caption=f"Page {preview_page} - Red box shows extraction area", use_column_width=True)
+                # Two columns for details and text
+                col_details, col_text = st.columns([1, 1])
                 
-                with col_text:
+                with col_details:
                     st.markdown("### 📊 Crop Coordinates")
                     st.info(f"""
                     **Current Selection:**
@@ -711,19 +742,22 @@ def main():
                     - Right (X2): {x2}%
                     - Bottom (Y2): {y2}%
                     
+                    **Preview Zoom:** {zoom_level}x
+                    
                     **Tips:**
                     - Adjust sliders to cover the BOQ table
-                    - Include Item No, Qty, Part No, Description, Material columns
+                    - Use higher zoom for precise selection
                     - Red box shows what will be extracted
                     """)
-                    
+                
+                with col_text:
                     # Extract sample text
                     sample_text = extract_text_from_region(uploaded_file, preview_page, current_crop)
                     st.session_state.preview_text = sample_text
                     
                     if sample_text:
                         st.markdown("### 📝 Sample Extracted Text")
-                        st.markdown(f"<div class='extracted-text'>{sample_text[:1000]}{'...' if len(sample_text) > 1000 else ''}</div>", unsafe_allow_html=True)
+                        st.markdown(f"<div class='extracted-text'>{sample_text[:1500]}{'...' if len(sample_text) > 1500 else ''}</div>", unsafe_allow_html=True)
                         
                         # Parse sample
                         parser = BOQParser()
@@ -883,16 +917,22 @@ def main():
 
         **Default**: Right side of page (50-95% width, 10-50% height)
 
-        #### 3. Preview
+        #### 3. Adjust Preview Zoom
+        Use the "Preview Zoom Level" slider in the sidebar to get a larger view:
+        - **1x**: Normal size
+        - **2x**: Double size (recommended)
+        - **3x**: Triple size (for precise adjustments)
+
+        #### 4. Preview
         Click **"👁️ Preview Region"** to:
         - See the selected area highlighted in red
         - View sample extracted text
         - Verify items are detected correctly
 
-        #### 4. Extract
+        #### 5. Extract
         Click **"🔍 Extract BOQ"** to process all pages.
 
-        #### 5. Review & Export
+        #### 6. Review & Export
         - Edit data in the table if needed
         - Download as Excel or CSV
 
@@ -911,14 +951,15 @@ def main():
         | Missing columns | Ensure region covers all columns |
         | Wrong parsing | Check that Item No starts each row |
         | Partial data | Increase Y2 (Bottom) to capture all rows |
+        | Preview too small | Increase Zoom Level in sidebar |
         """)
     
     # Footer
     st.markdown("""
     <div class="footer">
-        <p>📋 BOQ Extractor Pro v13.0 | Crop Region-based Extraction</p>
+        <p>📋 BOQ Extractor Pro v13.1 | Crop Region-based Extraction</p>
         <p style="font-size: 0.8rem; color: #999;">
-            Smart parsing | Interactive preview | Batch processing
+            Smart parsing | Adjustable preview | Batch processing
         </p>
     </div>
     """, unsafe_allow_html=True)
