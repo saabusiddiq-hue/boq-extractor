@@ -51,128 +51,63 @@ st.markdown("""
     .right-panel { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; min-height: 600px; }
     .extract-btn { background: linear-gradient(90deg, #238636 0%, #2ea043 100%) !important; color: white !important; font-weight: 600 !important; padding: 1rem !important; font-size: 1.1rem !important; }
     .info-box { background: rgba(31, 111, 235, 0.1); border: 1px solid #1f6feb; border-radius: 6px; padding: 0.75rem; margin: 0.5rem 0; font-size: 0.85rem; }
-    .warning-box { background: rgba(248, 81, 73, 0.1); border: 1px solid #f85149; border-radius: 6px; padding: 0.75rem; margin: 0.5rem 0; }
-    .success-box { background: rgba(35, 134, 54, 0.1); border: 1px solid #238636; border-radius: 6px; padding: 0.75rem; margin: 0.5rem 0; }
+    .fig-no-tag { background: rgba(35, 134, 54, 0.2); color: #3fb950; padding: 2px 6px; border-radius: 4px; font-weight: 500; }
 </style>
 """, unsafe_allow_html=True)
 
-class MaterialSeparator:
-    """Separate Material from Description"""
-
+class BOQFormat:
+    """Understand BOQ format from sample"""
     def __init__(self):
-        # Material patterns - ordered by specificity (most specific first)
-        self.material_patterns = [
-            (r"Per\s+MSS\-SP\d+", "Per MSS-SP"),  # Per MSS-SP58
-            (r"MSS\-SP\d+", "MSS-SP"),  # MSS-SP58
-            (r"A194\s+GR\.?2H", "A194 GR.2H"),  # A194 GR.2H
-            (r"A193\s+GR\.?B7", "A193 GR.B7"),  # A193 GR.B7
-            (r"A240\s+SS316L?", "A240 SS316"),  # A240 SS316
-            (r"SS316L?", "SS316"),  # SS316, SS316L
-            (r"SS304L?", "SS304"),  # SS304, SS304L
-            (r"A516", "A516"),  # A516
-            (r"A240", "A240"),  # A240
-            (r"A194", "A194"),  # A194
-            (r"A193", "A193"),  # A193
-            (r"A105", "A105"),  # A105
-            (r"A36\b", "A36"),  # A36 (word boundary)
-            (r"Gr\.?\s*\d+\.?\d*", "Grade"),  # Gr. 8.8, Gr.2H
-            (r"CI\.?\s*\d+", "CI"),  # CI. 8
-            (r"Cast\s+Iron", "Cast Iron"),  # Cast Iron
-            (r"Stainless\s+Steel", "Stainless Steel"),  # Stainless Steel
-            (r"Carbon\s+Steel", "Carbon Steel"),  # Carbon Steel
-            (r"Graphite\s+bronze", "Graphite bronze"),  # Graphite bronze
-            (r"Graphite", "Graphite"),  # Graphite
-            (r"Bronze", "Bronze"),  # Bronze
-            (r"PTFE", "PTFE"),  # PTFE
-        ]
+        self.columns = []
+        self.fig_no_position = 2  # Default: position 2 (after Item, Qty)
+        self.has_material_column = True
+        self.fig_no_examples = []  # Store examples like PTFE, Graphite bronze
 
-    def separate(self, description: str) -> Tuple[str, str]:
-        """
-        Separate Material from Description
-        Returns: (clean_description, material)
-        """
-        if not description:
-            return "", ""
+    def analyze(self, text: str):
+        """Analyze sample text to understand format"""
+        lines = text.strip().split("\n")
 
-        # Search for material patterns from the END of the string
-        for pattern, mat_type in self.material_patterns:
-            # Find all matches
-            matches = list(re.finditer(pattern, description, re.IGNORECASE))
-            if matches:
-                # Get the last match (closest to end)
-                last_match = matches[-1]
+        # Find header
+        for line in lines[:10]:
+            line_upper = line.upper()
+            if "ITEM" in line_upper:
+                # Parse headers
+                headers = [h.strip() for h in re.split(r"\s{2,}|\t", line) if h.strip()]
+                self.columns = headers
 
-                # Extract material
-                material = last_match.group(0)
+                # Find FIG NO / PART NO position
+                for i, h in enumerate(headers):
+                    if any(x in h.upper() for x in ["FIG", "PART", "MARK"]):
+                        self.fig_no_position = i
+                        break
 
-                # Everything before the material is description
-                clean_desc = description[:last_match.start()].strip(" -:/\t")
+                # Check for MATERIAL column
+                if any("MATERIAL" in h.upper() for h in headers):
+                    self.has_material_column = True
+                break
 
-                # Remove trailing "Per" if present (common pattern)
-                clean_desc = re.sub(r"\s+Per\s*$", "", clean_desc, flags=re.IGNORECASE)
+        # Collect FIG NO examples from data rows
+        for line in lines[5:25]:
+            if line.strip() and line[0].isdigit():
+                parts = line.split()
+                if len(parts) > self.fig_no_position:
+                    # FIG NO can be 1 or 2 words
+                    fig_candidate = parts[self.fig_no_position]
 
-                return clean_desc, material
+                    # Check if next word is also part of FIG NO (like "Graphite bronze")
+                    if self.fig_no_position + 1 < len(parts):
+                        next_word = parts[self.fig_no_position + 1]
+                        if next_word.lower() in ["bronze", "plate", "steel", "pad"]:
+                            fig_candidate += " " + next_word
 
-        # No material found
-        return description, ""
+                    if fig_candidate and fig_candidate not in self.fig_no_examples:
+                        self.fig_no_examples.append(fig_candidate)
 
-class BOQExtractor:
-    """Extract BOQ with proper column separation"""
+        return self
 
-    def __init__(self):
-        self.material_sep = MaterialSeparator()
-
-    def extract_line(self, line: str) -> Dict:
-        """Extract columns from a BOQ line"""
-        parts = line.split()
-        if len(parts) < 3 or not parts[0].isdigit():
-            return None
-
-        try:
-            item_no = int(parts[0])
-
-            # Qty (position 1)
-            qty = 1
-            idx = 1
-            if idx < len(parts) and parts[idx].isdigit():
-                qty = int(parts[idx])
-                idx += 1
-
-            # FIG NO (can be 1 or 2 words)
-            fig_no = ""
-            if idx < len(parts):
-                fig_no = parts[idx]
-                idx += 1
-
-                # Check for 2-word FIG NO
-                if idx < len(parts):
-                    next_word = parts[idx]
-                    if next_word.lower() in ["bronze", "plate", "steel", "pad", "sheet"]:
-                        fig_no += " " + next_word
-                        idx += 1
-
-            # Everything else is Description + Material combined
-            remaining = parts[idx:] if idx < len(parts) else []
-            full_text = " ".join(remaining)
-
-            # Separate Material from Description
-            clean_desc, material = self.material_sep.separate(full_text)
-
-            return {
-                "Item": item_no,
-                "Qty": qty,
-                "Fig No": fig_no,
-                "Description": clean_desc,
-                "Material": material
-            }
-
-        except Exception as e:
-            return None
-
-def extract_boq_v28(pdf_bytes: bytes, crop: Tuple, max_items: int) -> List[Dict]:
-    """Extract BOQ with Material separation"""
+def extract_boq_v26(pdf_bytes: bytes, crop: Tuple, max_items: int, format_info: BOQFormat = None) -> List[Dict]:
+    """Extract BOQ preserving FIG NO in description as intended"""
     items = []
-    extractor = BOQExtractor()
 
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
         for page_num in range(1, len(pdf.pages) + 1):
@@ -190,10 +125,89 @@ def extract_boq_v28(pdf_bytes: bytes, crop: Tuple, max_items: int) -> List[Dict]
                 if not line or not line[0].isdigit():
                     continue
 
-                result = extractor.extract_line(line)
-                if result and result["Item"] <= max_items:
-                    result["Page"] = page_num
-                    items.append(result)
+                parts = line.split()
+                if len(parts) < 3:
+                    continue
+
+                try:
+                    item_no = int(parts[0])
+                    if item_no > max_items:
+                        continue
+
+                    # Qty (position 1)
+                    qty = 1
+                    idx = 1
+                    if idx < len(parts) and parts[idx].isdigit():
+                        qty = int(parts[idx])
+                        idx += 1
+
+                    # FIG NO (can be 1 or 2 words)
+                    fig_no = ""
+                    if idx < len(parts):
+                        fig_no = parts[idx]
+                        idx += 1
+
+                        # Check if next word extends FIG NO (Graphite bronze, SS Plate, etc.)
+                        if idx < len(parts):
+                            next_word = parts[idx]
+                            # Common second words for FIG NO
+                            if next_word.lower() in ["bronze", "plate", "steel", "pad", "sheet", "rod", "bush"]:
+                                # Verify it's not actually the start of description
+                                if len(parts) > idx + 1:  # There are more parts after
+                                    fig_no += " " + next_word
+                                    idx += 1
+
+                    # Rest is Description + Material
+                    remaining = parts[idx:] if idx < len(parts) else []
+
+                    description = ""
+                    material = ""
+
+                    if remaining:
+                        # Join all remaining as description initially
+                        full_text = " ".join(remaining)
+
+                        # Check if there's a material specification at the end
+                        # Material patterns: A36, SS316, Per MSS-SP58, Gr. 8.8, etc.
+                        material_patterns = [
+                            r"(A36|A105|A193|A194|A240|A516)\b",
+                            r"(SS316|SS316L|SS304|SS304L)\b",
+                            r"(Per\s+MSS\-SP\d+|MSS\-SP\d+)",
+                            r"(Gr\.\s*\d+\.?\d*)",
+                            r"(CI\.\s*\d+|Cast\s+Iron)",
+                            r"(Bronze|Graphite|PTFE|Carbon\s+Steel)"
+                        ]
+
+                        # Search from end for material
+                        material_found = ""
+                        for pattern in material_patterns:
+                            matches = list(re.finditer(pattern, full_text, re.IGNORECASE))
+                            if matches:
+                                # Get the last match (closest to end)
+                                last_match = matches[-1]
+                                # Check if it's at the end or followed by minimal text
+                                remaining_after = full_text[last_match.end():].strip()
+                                if len(remaining_after) < 5:  # Material is at end
+                                    material_found = last_match.group(1)
+                                    # Description is everything before material
+                                    description = full_text[:last_match.start()].strip(" -:/")
+                                    break
+
+                        if not material_found:
+                            # No material found, everything is description
+                            description = full_text
+
+                    items.append({
+                        "Item": item_no,
+                        "Qty": qty,
+                        "Fig No": fig_no,
+                        "Description": description,
+                        "Material": material,
+                        "Page": page_num
+                    })
+
+                except Exception as e:
+                    continue
 
     return items
 
@@ -262,20 +276,22 @@ def create_excel(df, yellow_header=True):
     return output.getvalue()
 
 # Session init
+if "format" not in st.session_state:
+    st.session_state.format = BOQFormat()
 if "target_bytes" not in st.session_state:
     st.session_state.target_bytes = None
 if "data" not in st.session_state:
     st.session_state.data = None
 
-st.title("📋 BOQ Extractor Pro v28 - Material Separation")
+st.title("📋 BOQ Extractor Pro v26 - Preserve FIG NO in Description")
 
 # TOP BAR
 st.markdown("<div class='upload-bar'>", unsafe_allow_html=True)
 
-col1, arr, col2 = st.columns([2, 0.3, 2])
+col1, arr, col2, col3 = st.columns([2, 0.3, 2, 3])
 
 with col1:
-    st.write("📤 Upload Sample (Optional)")
+    st.write("📤 Upload Sample (JPG/PNG/PDF)")
     sample_file = st.file_uploader("Sample", type=["jpg", "jpeg", "png", "pdf"], label_visibility="collapsed")
 
 with arr:
@@ -289,7 +305,33 @@ with col2:
         st.session_state.target_bytes = target_file.read()
         st.success("Target loaded")
 
+with col3:
+    if sample_file:
+        st.write("&nbsp;")
+        if st.button("🔍 Analyze Sample Format", use_container_width=True):
+            with st.spinner("Learning format..."):
+                try:
+                    if sample_file.type == "application/pdf":
+                        with pdfplumber.open(io.BytesIO(sample_file.read())) as pdf:
+                            text = pdf.pages[0].extract_text() or ""
+                    else:
+                        img = Image.open(io.BytesIO(sample_file.read()))
+                        enhancer = ImageEnhance.Contrast(img)
+                        img = enhancer.enhance(2.0)
+                        text = pytesseract.image_to_string(img, config="--psm 6")
+
+                    st.session_state.format.analyze(text)
+                    st.success(f"✅ Learned {len(st.session_state.format.fig_no_examples)} FIG NO patterns")
+                except Exception as e:
+                    st.error(f"Error: {e}")
+
 st.markdown("</div>", unsafe_allow_html=True)
+
+# Show learned format
+if st.session_state.format.fig_no_examples:
+    with st.expander("📊 Detected FIG NO Examples", expanded=False):
+        st.write("Examples:", st.session_state.format.fig_no_examples[:10])
+        st.info("ℹ️ FIG NO will be extracted separately, but DESCRIPTION keeps the full text including FIG NO prefix")
 
 # MAIN LAYOUT
 left_col, right_col = st.columns([1, 2.5])
@@ -318,7 +360,7 @@ with left_col:
 
     st.markdown("</div>", unsafe_allow_html=True)
 
-# RIGHT - Extract & Table
+# RIGHT - Table
 with right_col:
     st.markdown("<div class='right-panel'>", unsafe_allow_html=True)
 
@@ -326,20 +368,18 @@ with right_col:
         if st.button("🔍 EXTRACT BOQ DATA", key="extract_btn", use_container_width=True):
             progress = st.progress(0, text="Extracting...")
 
-            items = extract_boq_v28(
+            items = extract_boq_v26(
                 st.session_state.target_bytes,
                 crop,
-                15
+                15,
+                st.session_state.format
             )
 
             progress.empty()
 
             if items:
                 st.session_state.data = pd.DataFrame(items)
-
-                # Show separation stats
-                with_material = sum(1 for item in items if item.get("Material"))
-                st.success(f"✅ Extracted {len(items)} items! ({with_material} with Material)")
+                st.success(f"✅ Extracted {len(items)} items!")
             else:
                 st.error("No items found")
 
@@ -347,21 +387,8 @@ with right_col:
     if st.session_state.data is not None and not st.session_state.data.empty:
         df = st.session_state.data
 
-        # Stats
-        total = len(df)
-        with_mat = (df["Material"] != "").sum()
-        without_mat = total - with_mat
-
-        cols_stats = st.columns(3)
-        cols_stats[0].metric("Total", total)
-        cols_stats[1].metric("With Material", with_mat, 
-                           delta=f"{with_mat}/{total}" if with_mat > 0 else None)
-        cols_stats[2].metric("No Material", without_mat)
-
-        if with_mat > 0:
-            st.markdown("<div class='success-box'>✅ Material successfully separated from Description!</div>", unsafe_allow_html=True)
-        else:
-            st.markdown("<div class='warning-box'>⚠️ No materials detected. Check if your BOQ has a Material column.</div>", unsafe_allow_html=True)
+        # Info
+        st.markdown("<div class='info-box'>FIG NO extracted separately | DESCRIPTION keeps full text | MATERIAL from end</div>", unsafe_allow_html=True)
 
         # Editable table
         edited_df = st.data_editor(

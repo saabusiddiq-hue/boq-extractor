@@ -1,50 +1,32 @@
-# BOQ Extractor Pro v28 - Material Separation
+# BOQ Extractor Pro v26 - Correct Understanding
 
-## Problem Solved
-**Material was merging into Description column**
+## Important Clarification
 
-### Before (Wrong):
-| Description | Material |
-|-------------|----------|
-| bronze Graphite bronze-190SQx5mm | (empty) |
-| Variable Effort Support Per MSS-SP58 | (empty) |
-| Inverted Beam Welding Attachment A36 | (empty) |
+**FIG NO is NOT removed from DESCRIPTION!**
 
-### After (Correct):
-| Description | Material |
-|-------------|----------|
-| bronze Graphite bronze-190SQx5mm | (empty - no material spec) |
-| Variable Effort Support | Per MSS-SP58 |
-| Inverted Beam Welding Attachment | A36 |
-| Full Nut | A194 GR.2H |
-| Weldless Eye Nut | A105 |
-| Pipe Clamp 2 Bolt | A36 |
+### Your Format:
+| FIG NO | DESCRIPTION | MATERIAL |
+|--------|-------------|----------|
+| PTFE | PTFE-140SQx3mm | (empty) |
+| Graphite bronze | Graphite bronze-140SQx5mm | (empty) |
+| V1-22-BM1 | Variable Effort Support | Per MSS-SP58 |
 
-## How It Works
+### Understanding:
+- **FIG NO** = What the item is (identifier)
+- **DESCRIPTION** = FIG NO + Specifications (this is INTENTIONAL, not duplicate)
+- **MATERIAL** = Material grade (only if different from FIG NO)
 
-### Material Separation Logic:
-1. Extract full text after Fig No
-2. Search for material patterns from **END** of text:
-   - `Per MSS-SP58`
-   - `A194 GR.2H`
-   - `A36`
-   - `SS316`
-   - etc.
-3. Split text at material position
-4. Everything before = Description
-5. Material pattern = Material column
+### Extraction Logic:
+1. Extract FIG NO (PTFE, Graphite bronze, V1-22-BM1, etc.)
+2. Keep DESCRIPTION as-is (includes FIG NO prefix)
+3. Extract MATERIAL only if found at end (A36, SS316, Per MSS-SP58)
 
-### Material Patterns Detected:
-- Per MSS-SP58, MSS-SP58
-- A194 GR.2H, A193 GR.B7
-- A240 SS316, SS316, SS316L
-- A36, A105, A516
-- Gr. 8.8, Grade 8.8
-- CI. 8, Cast Iron
-- And more...
+### Example:
+**Input line:** `1  1  PTFE  PTFE-140SQx3mm`
 
-## Usage
-1. Upload PDF
-2. Adjust crop to include all columns
-3. Click EXTRACT
-4. Material automatically separated from Description
+**Output:**
+- Item: 1
+- Qty: 1
+- Fig No: PTFE
+- Description: PTFE-140SQx3mm (kept as-is!)
+- Material: (empty)
