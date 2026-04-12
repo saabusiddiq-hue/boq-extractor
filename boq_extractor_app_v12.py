@@ -1,6 +1,6 @@
 """
-BOQ Extractor Pro v14.0 - Dark Theme Edition
-PDF to Excel/CSV Converter with Auto-Preview & Interactive Crop
+BOQ Extractor Pro v15.0 - Auto Table Detection Edition
+Smart Content-Based Table Extraction with Visual Grid Overlay
 """
 
 import streamlit as st
@@ -8,17 +8,16 @@ import pandas as pd
 import numpy as np
 import io
 import re
-import base64
 from datetime import datetime
 import pdfplumber
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
-from PIL import Image, ImageDraw, ImageFont
-import fitz  # PyMuPDF
+import fitz
+from PIL import Image, ImageDraw
 
 # Page configuration - DARK THEME
 st.set_page_config(
-    page_title="BOQ Extractor Pro",
+    page_title="BOQ Extractor Pro - Auto Detect",
     page_icon="📋",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -30,25 +29,21 @@ def load_css():
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
         
-        /* Main app background - Dark */
         .stApp {
             background-color: #0f1117 !important;
         }
         
-        /* Sidebar - Darker */
         [data-testid="stSidebar"] {
             background-color: #161b22 !important;
             border-right: 1px solid #30363d;
         }
         
-        /* Headers */
         h1, h2, h3, h4, h5, h6 {
             color: #e6edf3 !important;
             font-family: 'Inter', sans-serif;
             font-weight: 600;
         }
         
-        /* Main header styling */
         .main-header {
             background: linear-gradient(135deg, #1f6feb 0%, #388bfd 100%);
             color: white;
@@ -67,14 +62,6 @@ def load_css():
             color: white !important;
         }
         
-        .main-header p {
-            font-size: 1.1rem;
-            opacity: 0.9;
-            margin-bottom: 1rem;
-            color: #e6edf3;
-        }
-        
-        /* Badge styling */
         .badge-container {
             display: flex;
             gap: 10px;
@@ -93,7 +80,6 @@ def load_css():
             border: 1px solid rgba(255,255,255,0.2);
         }
         
-        /* Section headers */
         .section-header {
             background: linear-gradient(90deg, #21262d 0%, #161b22 100%);
             padding: 1rem 1.5rem;
@@ -109,7 +95,6 @@ def load_css():
             font-weight: 600;
         }
         
-        /* Cards */
         .stat-card {
             background: #161b22;
             border-radius: 12px;
@@ -132,30 +117,19 @@ def load_css():
             letter-spacing: 0.5px;
         }
         
-        /* Preview box */
-        .preview-box {
-            border: 3px solid #1f6feb;
-            border-radius: 12px;
-            overflow: hidden;
-            position: relative;
-            background: #0d1117;
-        }
-        
-        /* Extracted text area */
         .extracted-text {
             background: #0d1117;
             color: #e6edf3;
             padding: 1.5rem;
             border-radius: 12px;
             font-family: 'Courier New', monospace;
-            font-size: 0.9rem;
+            font-size: 0.85rem;
             max-height: 400px;
             overflow-y: auto;
             white-space: pre-wrap;
             border: 1px solid #30363d;
         }
         
-        /* Slider labels */
         .slider-label {
             font-weight: 600;
             color: #e6edf3;
@@ -163,7 +137,6 @@ def load_css():
             font-size: 0.9rem;
         }
         
-        /* Crop info box */
         .crop-info {
             background: #21262d;
             border-radius: 8px;
@@ -185,14 +158,12 @@ def load_css():
             color: #c9d1d9;
         }
         
-        /* Buttons */
         .stButton>button {
             background: linear-gradient(135deg, #238636 0%, #2ea043 100%) !important;
             color: white !important;
             border: none !important;
             border-radius: 8px !important;
             font-weight: 600 !important;
-            transition: all 0.2s !important;
         }
         
         .stButton>button:hover {
@@ -206,20 +177,10 @@ def load_css():
             color: #c9d1d9 !important;
         }
         
-        /* Input fields */
-        .stTextInput>div>div>input, .stNumberInput>div>div>input {
-            background-color: #0d1117 !important;
-            color: #e6edf3 !important;
-            border: 1px solid #30363d !important;
-            border-radius: 6px !important;
-        }
-        
-        /* Sliders */
         .stSlider>div>div>div {
             background-color: #1f6feb !important;
         }
         
-        /* File uploader */
         .stFileUploader>div>div {
             background-color: #161b22 !important;
             border: 2px dashed #30363d !important;
@@ -227,14 +188,6 @@ def load_css():
             color: #8b949e !important;
         }
         
-        /* Data editor */
-        .stDataFrame {
-            background-color: #161b22 !important;
-            border: 1px solid #30363d !important;
-            border-radius: 10px !important;
-        }
-        
-        /* Success/Warning/Error messages */
         .stSuccess {
             background-color: rgba(35, 134, 54, 0.1) !important;
             border: 1px solid #238636 !important;
@@ -247,20 +200,12 @@ def load_css():
             color: #e3b341 !important;
         }
         
-        .stError {
-            background-color: rgba(248, 81, 73, 0.1) !important;
-            border: 1px solid #f85149 !important;
-            color: #f85149 !important;
-        }
-        
-        /* Info boxes */
         .stInfo {
             background-color: rgba(56, 139, 253, 0.1) !important;
             border: 1px solid #388bfd !important;
             color: #58a6ff !important;
         }
         
-        /* Custom scrollbar */
         ::-webkit-scrollbar {
             width: 8px;
             height: 8px;
@@ -276,7 +221,6 @@ def load_css():
             border-radius: 4px;
         }
         
-        /* Footer */
         .footer {
             text-align: center;
             padding: 2rem;
@@ -285,146 +229,280 @@ def load_css():
             margin-top: 3rem;
         }
         
-        /* Text colors */
         p, span, label {
             color: #c9d1d9 !important;
+        }
+        
+        .detected-column {
+            background: rgba(31, 111, 235, 0.2);
+            border-left: 3px solid #1f6feb;
+            padding: 0.5rem;
+            margin: 0.25rem 0;
+            border-radius: 4px;
+            color: #e6edf3;
         }
     </style>
     """, unsafe_allow_html=True)
 
 # =============================================================================
-# SMART BOQ PARSER
+# SMART TABLE DETECTOR - Content Based
 # =============================================================================
 
-class BOQParser:
-    """Intelligent BOQ parser using pattern recognition"""
+class SmartTableDetector:
+    """
+    Detects table structure based on content patterns rather than grid lines.
+    Optimized for BOQ tables with columns: Item, No. Req'd, Fig. No., Description, Material
+    """
     
     def __init__(self):
-        self.material_patterns = [
-            r'A240\s+SS316', r'A240\s+SS304', r'A36\b', r'A105\b',
-            r'A193\s+GR\.B7', r'A194\s+GR\.2H', r'A193\s+B7', r'A194\s+2H',
-            r'Per\s+MSS-SP[0-9]+', r'CARBON\s+STEEL', r'SS316', r'SS304',
-            r'A516\s+GR\.60', r'A516\s+GR\.70', r'A240\b', r'A193\b',
-            r'A194\b', r'A516\b', r'Graphite\s+bronze', r'BRONZE', r'SS\s+316'
-        ]
-        
-        self.part_patterns = [
-            r'^[A-Z][0-9]+-[A-Z][0-9]+$',
-            r'^V[0-9]+-[0-9]+-[A-Z]+[0-9]*$',
-            r'^M[0-9]+x[0-9]+$',
-            r'^PC[0-9]+-[0-9\-]+$',
-            r'^[0-9]+x[0-9]+x[0-9]+$',
-            r'^[A-Z][0-9]+$',
-            r'^[0-9]+-[A-Z][0-9]+$',
-        ]
-
-    def is_item_number(self, text):
-        try:
-            num = int(text.strip())
-            return 1 <= num <= 999
-        except:
-            return False
-
-    def is_quantity(self, text):
-        try:
-            num = int(text.strip())
-            return 1 <= num <= 9999
-        except:
-            return False
-
-    def is_part_number(self, text):
-        text = text.strip()
-        if not text:
-            return False
-        return any(re.match(pattern, text, re.IGNORECASE) for pattern in self.part_patterns)
-
-    def extract_material(self, text):
-        text = text.strip()
-        for pattern in self.material_patterns:
-            match = re.search(pattern, text, re.IGNORECASE)
-            if match:
-                return match.group(0), text[:match.start()].strip(), text[match.end():].strip()
-        return "", text, ""
-
-    def parse_line(self, line):
-        line = line.strip()
-        if not line or len(line) < 10:
-            return None
-
-        skip_keywords = ['ITEM', 'NO.', 'QTY', 'QUANTITY', 'PART', 'DESCRIPTION', 
-                        'MATERIAL', 'DRAWING', 'TITLE', 'NOTE:', 'DATE:']
-        first_word = line.split()[0].upper() if line.split() else ""
-        if any(kw in first_word for kw in skip_keywords):
-            return None
-
-        parts = line.split()
-        if len(parts) < 4:
-            return None
-
-        item_no = None
-        quantity = None
-        part_no = None
-        description = ""
-        material = ""
-
-        if self.is_item_number(parts[0]) and self.is_quantity(parts[1]):
-            item_no = int(parts[0])
-            quantity = int(parts[1])
-            remaining = parts[2:]
-            
-            part_idx = -1
-            for i, part in enumerate(remaining[:3]):
-                if self.is_part_number(part):
-                    part_no = part
-                    part_idx = i
-                    break
-            
-            if part_no is None:
-                for i, part in enumerate(remaining[:3]):
-                    if len(part) >= 3 and any(c.isdigit() for c in part) and any(c.isalpha() for c in part):
-                        part_no = part
-                        part_idx = i
-                        break
-            
-            if part_no:
-                remaining_str = ' '.join(remaining[part_idx+1:])
-                mat, desc_before, desc_after = self.extract_material(remaining_str)
-                if mat:
-                    material = mat
-                    description = desc_before
-                else:
-                    description = remaining_str
-            else:
-                description = ' '.join(remaining)
-        else:
-            return None
-
-        if item_no is None or quantity is None:
-            return None
-
-        return {
-            'Item No': item_no,
-            'Quantity': quantity,
-            'Part No': part_no or "",
-            'Description': description.strip(),
-            'Material': material
+        self.column_patterns = {
+            'item_no': [r'^\d+$', r'^\d+\.?$'],  # Just numbers: 1, 2, 3, 4...
+            'req_qty': [r'^\d+$', r'^\d+\s*(?:EA|PC|SET|NOS)?$'],  # Quantities: 1, 2, 4
+            'fig_no': [r'^[A-Z]\d+[-_][A-Z]?\d+', r'^F\d+[-_]M\d+', r'^V\d+[-_]\d+[-_][A-Z]+\d*', r'^PC\d+[-_]\d+'],  # F125-M36, V2-21-TS2
+            'description': [r'(?:Beam|Support|Nut|Rod|Clamp|Pipe|Thread|Weldless|Inverted|Variable|Full|All)\s*(?:Welding|Effort|Eye|Attachment)?'],  # Text descriptions
+            'material': [r'A36\b', r'A105\b', r'A193\s*GR?[.]?B7', r'A194\s*GR?[.]?2H', r'Per\s*MSS[-]?SP\d+', r'SS316', r'SS304', r'A516']  # Material codes
         }
-
-    def parse_text_block(self, text):
+        
+        self.max_items = 15  # Only extract items 1-15
+        
+    def analyze_text_structure(self, text_lines):
+        """
+        Analyze text to detect column boundaries based on word positions.
+        Returns detected columns with their x-position ranges.
+        """
+        if not text_lines:
+            return []
+        
+        # Collect all words with their positions
+        word_positions = []
+        for line_idx, line in enumerate(text_lines):
+            words = line.strip().split()
+            # Estimate word positions (simplified - assumes monospace/fixed width)
+            char_pos = 0
+            for word in words:
+                word_positions.append({
+                    'word': word,
+                    'line': line_idx,
+                    'start_pos': char_pos,
+                    'end_pos': char_pos + len(word)
+                })
+                char_pos += len(word) + 1  # +1 for space
+        
+        # Detect column boundaries by finding gaps in word distribution
+        # This is a simplified version - in production, use pdfplumber's char/word positions
+        return word_positions
+    
+    def detect_columns_from_pdf(self, page):
+        """
+        Use pdfplumber to detect column positions from PDF character data.
+        """
+        chars = page.chars
+        if not chars:
+            return None
+        
+        # Group characters by their x0 position (left edge)
+        # Round to nearest 10 pixels to group into columns
+        x_positions = {}
+        for char in chars:
+            x_rounded = round(char['x0'] / 10) * 10
+            if x_rounded not in x_positions:
+                x_positions[x_rounded] = []
+            x_positions[x_rounded].append(char)
+        
+        # Find clusters of x-positions that form columns
+        sorted_x = sorted(x_positions.keys())
+        columns = []
+        current_col = [sorted_x[0]] if sorted_x else []
+        
+        for i in range(1, len(sorted_x)):
+            if sorted_x[i] - sorted_x[i-1] < 50:  # Within 50 pixels = same column
+                current_col.append(sorted_x[i])
+            else:
+                # Save current column
+                avg_x = sum(current_col) / len(current_col)
+                columns.append({
+                    'x': avg_x,
+                    'width': 80,  # Estimated width
+                    'chars': sum(len(x_positions[x]) for x in current_col)
+                })
+                current_col = [sorted_x[i]]
+        
+        if current_col:
+            avg_x = sum(current_col) / len(current_col)
+            columns.append({
+                'x': avg_x,
+                'width': 80,
+                'chars': sum(len(x_positions[x]) for x in current_col)
+            })
+        
+        # Filter to keep only significant columns (with enough characters)
+        significant_cols = [c for c in columns if c['chars'] > 20]
+        
+        return significant_cols[:5]  # Return top 5 columns
+    
+    def parse_table_content(self, text, column_boundaries=None):
+        """
+        Parse table content into structured data.
+        Handles the specific format: Item | Qty | Fig No | Description | Material
+        """
+        lines = text.strip().split('\n')
         items = []
-        lines = text.split('\n')
+        
         for line in lines:
-            parsed = self.parse_line(line)
-            if parsed:
-                items.append(parsed)
+            line = line.strip()
+            if not line:
+                continue
+            
+            # Try to parse based on expected patterns
+            parsed = self._parse_line_smart(line)
+            
+            if parsed and parsed.get('Item No'):
+                item_no = parsed['Item No']
+                # Only include items 1-15
+                if 1 <= item_no <= self.max_items:
+                    items.append(parsed)
+                elif item_no > self.max_items:
+                    # Stop after item 15 (Spring details usually start after)
+                    break
+        
         return items
+    
+    def _parse_line_smart(self, line):
+        """
+        Smart line parsing that detects columns by content type.
+        """
+        # Skip header lines
+        skip_keywords = ['ITEM', 'NO.', "REQ'D", 'FIG', 'DESCRIPTION', 'MATERIAL', 
+                        'NO', 'REQUIRED', 'FIGURE', 'PART', 'DRAWING']
+        
+        first_word = line.split()[0].upper() if line.split() else ""
+        if any(kw in first_word for kw in skip_keywords) and len(line.split()) <= 3:
+            return None
+        
+        parts = line.split()
+        if len(parts) < 3:
+            return None
+        
+        result = {
+            'Item No': None,
+            'Quantity': None,
+            'Fig No': '',
+            'Description': '',
+            'Material': ''
+        }
+        
+        # Pattern 1: Item No is first number (1-15)
+        if parts[0].isdigit():
+            item_no = int(parts[0])
+            if 1 <= item_no <= 15:
+                result['Item No'] = item_no
+                remaining = parts[1:]
+                
+                # Next should be quantity (usually small number 1-10)
+                if remaining and remaining[0].isdigit() and 1 <= int(remaining[0]) <= 10:
+                    result['Quantity'] = int(remaining[0])
+                    remaining = remaining[1:]
+                
+                # Look for Fig No pattern (F125-M36, V2-21-TS2, etc.)
+                fig_idx = -1
+                for i, part in enumerate(remaining[:3]):
+                    if self._is_fig_no(part):
+                        result['Fig No'] = part
+                        fig_idx = i
+                        break
+                
+                # Everything between Fig No and Material is Description
+                if fig_idx >= 0:
+                    desc_parts = []
+                    mat_parts = []
+                    
+                    # Check remaining parts for material patterns
+                    for i, part in enumerate(remaining[fig_idx+1:], start=fig_idx+1):
+                        if self._is_material(part) or (i < len(remaining)-1 and self._is_material(part + ' ' + remaining[i+1])):
+                            mat_parts.append(part)
+                        elif mat_parts:
+                            mat_parts.append(part)
+                        else:
+                            desc_parts.append(part)
+                    
+                    result['Description'] = ' '.join(desc_parts)
+                    result['Material'] = ' '.join(mat_parts) if mat_parts else self._extract_material_from_end(' '.join(remaining[fig_idx+1:]))
+                else:
+                    # No fig no found, treat as description
+                    result['Description'] = ' '.join(remaining)
+        
+        return result if result['Item No'] else None
+    
+    def _is_fig_no(self, text):
+        """Check if text matches Fig No pattern"""
+        patterns = [
+            r'^[A-Z]\d+[-_][A-Z]?\d+',
+            r'^F\d+[-_]M\d+',
+            r'^V\d+[-_]\d+[-_][A-Z]+\d*',
+            r'^PC\d+[-_]\d+',
+            r'^F\d+[-_]TS\d+',
+            r'^F\d+[-_]M\d+\s*L?=\d*'
+        ]
+        return any(re.match(p, text, re.IGNORECASE) for p in patterns)
+    
+    def _is_material(self, text):
+        """Check if text is a material code"""
+        patterns = [r'A36\b', r'A105\b', r'A193', r'A194', r'MSS[-]?SP', r'SS316', r'SS304', r'A516', r'A240']
+        return any(re.search(p, text, re.IGNORECASE) for p in patterns)
+    
+    def _extract_material_from_end(self, text):
+        """Extract material from end of description"""
+        # Common material patterns at end of line
+        mat_match = re.search(r'(A36|A105|A193\s*GR?[.]?B7|A194\s*GR?[.]?2H|Per\s*MSS[-]?SP\d+|SS316|SS304|A516)(.*?)$', text, re.IGNORECASE)
+        if mat_match:
+            return mat_match.group(0).strip()
+        return ''
 
 # =============================================================================
-# PDF PROCESSING FUNCTIONS
+# VISUAL GRID OVERLAY
 # =============================================================================
 
-def render_pdf_page(pdf_file, page_num, crop_box=None, zoom_level=2.0):
-    """Render PDF page with optional crop box overlay"""
+def add_grid_overlay(img_data, column_boundaries, row_positions=None):
+    """
+    Add visual grid lines to the preview image.
+    """
+    try:
+        # Convert bytes to PIL Image
+        img = Image.open(io.BytesIO(img_data))
+        draw = ImageDraw.Draw(img)
+        
+        width, height = img.size
+        
+        # Draw vertical column lines
+        for col in column_boundaries:
+            x = int(col['x'])
+            if 0 <= x < width:
+                # Draw vertical line
+                draw.line([(x, 0), (x, height)], fill=(31, 111, 235), width=2)  # Blue lines
+                # Draw column label at top
+                draw.rectangle([x-2, 0, x+2, 20], fill=(31, 111, 235))
+        
+        # Draw horizontal row lines if provided
+        if row_positions:
+            for y in row_positions:
+                if 0 <= y < height:
+                    draw.line([(0, y), (width, y)], fill=(248, 81, 73), width=1)  # Red lines
+        
+        # Convert back to bytes
+        output = io.BytesIO()
+        img.save(output, format='PNG')
+        return output.getvalue()
+    except Exception as e:
+        return img_data
+
+# =============================================================================
+# PDF PROCESSING WITH AUTO DETECTION
+# =============================================================================
+
+def render_pdf_with_grid(pdf_file, page_num, detector, zoom_level=2.0):
+    """
+    Render PDF with automatic column detection and grid overlay.
+    """
     try:
         pdf_file.seek(0)
         doc = fitz.open(stream=pdf_file.read(), filetype="pdf")
@@ -434,154 +512,69 @@ def render_pdf_page(pdf_file, page_num, crop_box=None, zoom_level=2.0):
             return None, None, "Invalid page number"
         
         page = doc[page_num - 1]
-        rect = page.rect
-        width_pt, height_pt = rect.width, rect.height
         
-        # Convert points to pixels (72 DPI standard, scaled by zoom)
-        width_px = int(width_pt * zoom_level)
-        height_px = int(height_pt * zoom_level)
+        # Detect columns using pdfplumber
+        pdf_file.seek(0)
+        with pdfplumber.open(pdf_file) as pdf:
+            plum_page = pdf.pages[page_num - 1]
+            columns = detector.detect_columns_from_pdf(plum_page)
         
-        # Calculate crop coordinates
-        crop_coords_px = None
-        if crop_box:
-            x1_pct, y1_pct, x2_pct, y2_pct = crop_box
-            x1 = width_pt * (x1_pct / 100)
-            y1 = height_pt * (y1_pct / 100)
-            x2 = width_pt * (x2_pct / 100)
-            y2 = height_pt * (y2_pct / 100)
-            
-            # Pixel coordinates for display
-            crop_coords_px = {
-                'x': int(x1 * zoom_level),
-                'y': int(y1 * zoom_level),
-                'width': int((x2 - x1) * zoom_level),
-                'height': int((y2 - y1) * zoom_level),
-                'x1_pct': x1_pct,
-                'y1_pct': y1_pct,
-                'x2_pct': x2_pct,
-                'y2_pct': y2_pct
-            }
-            
-            # Draw crop rectangle
-            crop_rect = fitz.Rect(x1, y1, x2, y2)
-            page.draw_rect(crop_rect, color=(0.97, 0.32, 0.29), width=3)
-            
-            # Semi-transparent fill using shape
-            shape = page.new_shape()
-            shape.draw_rect(crop_rect)
-            shape.finish(color=(0.97, 0.32, 0.29), fill=(0.97, 0.32, 0.29), fill_opacity=0.15)
-            shape.commit()
-            
-            # Add label
-            label_point = fitz.Point(x1 + 5, y1 - 5)
-            page.insert_text(label_point, "EXTRACTION AREA", 
-                           fontsize=14, color=(0.97, 0.32, 0.29), fontname="helv")
-        
-        # Render
+        # Render base image
         mat = fitz.Matrix(zoom_level, zoom_level)
         pix = page.get_pixmap(matrix=mat)
         img_data = pix.tobytes("png")
         
+        # Add grid overlay if columns detected
+        if columns:
+            img_data = add_grid_overlay(img_data, columns)
+        
         doc.close()
-        return img_data, crop_coords_px, None
+        return img_data, columns, None
         
     except Exception as e:
         return None, None, str(e)
 
-def extract_text_from_region(pdf_file, page_num, crop_box):
-    """Extract text from specific region of PDF"""
+def extract_with_smart_detection(pdf_file, page_num, crop_box, detector):
+    """
+    Extract text using smart table detection.
+    """
     try:
         pdf_file.seek(0)
         with pdfplumber.open(pdf_file) as pdf:
             page = pdf.pages[page_num - 1]
             width, height = page.width, page.height
             
-            x1_pct, y1_pct, x2_pct, y2_pct = crop_box
-            x1 = width * (x1_pct / 100)
-            y1 = height * (y1_pct / 100)
-            x2 = width * (x2_pct / 100)
-            y2 = height * (y2_pct / 100)
-            
-            cropped = page.crop((x1, y1, x2, y2))
-            text = cropped.extract_text()
-            return text
-            
-    except Exception as e:
-        return f"Error extracting text: {str(e)}"
-
-def process_pdf_batch(pdf_file, start_page, end_page, crop_box, progress_callback=None):
-    """Process multiple pages with the same crop region"""
-    all_items = []
-    logs = []
-    
-    try:
-        pdf_file.seek(0)
-        with pdfplumber.open(pdf_file) as pdf:
-            total_pages = len(pdf.pages)
-            actual_end = min(end_page, total_pages) if end_page != 999 else total_pages
-            
-            logs.append(f"📁 Processing pages {start_page} to {actual_end} (Total: {total_pages})")
-            
-            parser = BOQParser()
-            
-            for page_num in range(start_page - 1, actual_end):
-                if progress_callback:
-                    progress = (page_num - start_page + 2) / (actual_end - start_page + 1)
-                    progress_callback(min(progress, 1.0), f"Processing page {page_num + 1}...")
-                
-                page = pdf.pages[page_num]
-                width, height = page.width, page.height
-                
+            # Apply crop if specified
+            if crop_box:
                 x1_pct, y1_pct, x2_pct, y2_pct = crop_box
                 x1 = width * (x1_pct / 100)
                 y1 = height * (y1_pct / 100)
                 x2 = width * (x2_pct / 100)
                 y2 = height * (y2_pct / 100)
-                
-                cropped = page.crop((x1, y1, x2, y2))
-                text = cropped.extract_text()
-                
-                items = parser.parse_text_block(text)
-                
-                full_text = page.extract_text()
-                drawing_no = ""
-                
-                dwg_patterns = [
-                    r'Q\d+\s+SUPP\s+\d+-\d+',
-                    r'DWG[.\s]*[A-Z0-9\-]+',
-                    r'DRAWING[.\s]*NO[.\s]*[A-Z0-9\-]+'
-                ]
-                for pattern in dwg_patterns:
-                    match = re.search(pattern, full_text, re.IGNORECASE)
-                    if match:
-                        drawing_no = match.group(0)
-                        break
-                
-                for item in items:
-                    item['Drawing No'] = drawing_no
-                    item['Page'] = page_num + 1
-                
-                status = "✅" if items else "⚠️"
-                logs.append(f"{status} Page {page_num+1}: {len(items)} items extracted")
-                all_items.extend(items)
-                
+                page = page.crop((x1, y1, x2, y2))
+            
+            text = page.extract_text()
+            lines = text.split('\n') if text else []
+            
+            # Parse with smart detector
+            items = detector.parse_table_content(text)
+            
+            return items, text, None
+            
     except Exception as e:
-        logs.append(f"❌ Error: {str(e)}")
-    
-    return all_items, logs
+        return [], "", str(e)
 
 # =============================================================================
-# EXCEL EXPORT - FIXED VERSION
+# EXCEL EXPORT
 # =============================================================================
 
 def create_excel_download(df, yellow_header=True):
-    """Create styled Excel file - FIXED column iteration"""
+    """Create styled Excel file"""
     output = io.BytesIO()
     wb = Workbook()
     ws = wb.active
     ws.title = "BOQ Data"
     
-    # Styles
     yellow_fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
     header_font = Font(bold=True, size=11, color="000000")
     border = Border(
@@ -590,7 +583,7 @@ def create_excel_download(df, yellow_header=True):
     )
     
     # Reorder columns
-    preferred_order = ['Drawing No', 'Page', 'Item No', 'Quantity', 'Part No', 'Description', 'Material']
+    preferred_order = ['Item No', 'Quantity', 'Fig No', 'Description', 'Material', 'Page']
     available_cols = [c for c in preferred_order if c in df.columns]
     other_cols = [c for c in df.columns if c not in preferred_order]
     final_cols = available_cols + other_cols
@@ -613,17 +606,15 @@ def create_excel_download(df, yellow_header=True):
             cell.border = border
             cell.alignment = Alignment(vertical="center", wrap_text=True)
     
-    # FIXED: Auto-adjust column widths - iterate properly through rows
+    # Auto-adjust column widths
     for idx, col in enumerate(df_export.columns, 1):
         max_length = len(str(col))
         
-        # Get column letter
         if idx <= 26:
             col_letter = chr(64 + idx)
         else:
             col_letter = chr(64 + (idx-1)//26) + chr(65 + (idx-1)%26)
         
-        # Iterate through all rows to find max length
         for row_idx in range(1, len(df_export) + 2):
             cell_value = ws.cell(row=row_idx, column=idx).value
             try:
@@ -636,9 +627,7 @@ def create_excel_download(df, yellow_header=True):
         adjusted_width = min(max_length + 2, 50)
         ws.column_dimensions[col_letter].width = adjusted_width
     
-    # Freeze header
     ws.freeze_panes = 'A2'
-    
     wb.save(output)
     output.seek(0)
     return output
@@ -650,16 +639,15 @@ def create_excel_download(df, yellow_header=True):
 def main():
     load_css()
     
-    # Header
     st.markdown("""
     <div class="main-header">
-        <h1>📋 BOQ Extractor Pro v14.0</h1>
-        <p>Dark Edition - Auto Preview & Smart Extraction</p>
+        <h1>📋 BOQ Extractor Pro v15.0</h1>
+        <p>Auto Table Detection - Smart Content Recognition</p>
         <div class="badge-container">
-            <span class="feature-badge">🎯 Auto Preview</span>
-            <span class="feature-badge">📐 Live Crop Adjust</span>
-            <span class="feature-badge">📊 Excel Export</span>
-            <span class="feature-badge">🎨 Dark UI</span>
+            <span class="feature-badge">🤖 Auto Detect</span>
+            <span class="feature-badge">📐 Visual Grid</span>
+            <span class="feature-badge">🎯 Items 1-15</span>
+            <span class="feature-badge">📊 Smart Parse</span>
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -667,276 +655,165 @@ def main():
     # Initialize session state
     if 'extracted_data' not in st.session_state:
         st.session_state.extracted_data = pd.DataFrame()
-    if 'extraction_logs' not in st.session_state:
-        st.session_state.extraction_logs = []
-    if 'crop_coords' not in st.session_state:
-        st.session_state.crop_coords = (10, 20, 90, 80)
-    if 'preview_text' not in st.session_state:
-        st.session_state.preview_text = ""
-    if 'zoom_level' not in st.session_state:
-        st.session_state.zoom_level = 1.5
+    if 'detector' not in st.session_state:
+        st.session_state.detector = SmartTableDetector()
     if 'pdf_file' not in st.session_state:
         st.session_state.pdf_file = None
-    if 'auto_preview' not in st.session_state:
-        st.session_state.auto_preview = False
+    if 'detected_columns' not in st.session_state:
+        st.session_state.detected_columns = None
     
-    # Sidebar controls
+    # Sidebar
     with st.sidebar:
-        st.markdown("### 📐 Region Configuration")
+        st.markdown("### 🎯 Detection Settings")
         
-        st.markdown("<div class='slider-label'>Left (X1) %</div>", unsafe_allow_html=True)
-        x1 = st.slider("X1", 0, 100, st.session_state.crop_coords[0], key="x1_slider", label_visibility="collapsed")
-        
-        st.markdown("<div class='slider-label'>Top (Y1) %</div>", unsafe_allow_html=True)
-        y1 = st.slider("Y1", 0, 100, st.session_state.crop_coords[1], key="y1_slider", label_visibility="collapsed")
-        
-        st.markdown("<div class='slider-label'>Right (X2) %</div>", unsafe_allow_html=True)
-        x2 = st.slider("X2", 0, 100, st.session_state.crop_coords[2], key="x2_slider", label_visibility="collapsed")
-        
-        st.markdown("<div class='slider-label'>Bottom (Y2) %</div>", unsafe_allow_html=True)
-        y2 = st.slider("Y2", 0, 100, st.session_state.crop_coords[3], key="y2_slider", label_visibility="collapsed")
-        
-        # Ensure valid coordinates
-        if x2 <= x1:
-            x2 = min(x1 + 10, 100)
-        if y2 <= y1:
-            y2 = min(y1 + 10, 100)
-            
-        current_crop = (x1, y1, x2, y2)
-        st.session_state.crop_coords = current_crop
-        
-        # Calculate crop dimensions
-        crop_width_pct = x2 - x1
-        crop_height_pct = y2 - y1
+        max_items = st.number_input("Max Items to Extract", 1, 50, 15, 
+                                  help="Stop extraction after this item number (excludes Spring details)")
+        st.session_state.detector.max_items = max_items
         
         st.markdown("---")
         
-        # Crop Size Display
-        st.markdown("### 📏 Crop Size")
-        with st.container():
-            st.markdown(f"""
-            <div class="crop-info">
-                <h4>Dimensions</h4>
-                <div class="crop-dimension">
-                    <span>Width:</span>
-                    <span>{crop_width_pct}% of page</span>
-                </div>
-                <div class="crop-dimension">
-                    <span>Height:</span>
-                    <span>{crop_height_pct}% of page</span>
-                </div>
-                <div class="crop-dimension" style="border-bottom: none;">
-                    <span>Area:</span>
-                    <span>{crop_width_pct * crop_height_pct / 100:.1f}% of page</span>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+        st.markdown("### 📐 Region (Optional)")
+        st.markdown("<div class='slider-label'>Left (X1) %</div>", unsafe_allow_html=True)
+        x1 = st.slider("X1", 0, 100, 5, key="x1", label_visibility="collapsed")
+        
+        st.markdown("<div class='slider-label'>Top (Y1) %</div>", unsafe_allow_html=True)
+        y1 = st.slider("Y1", 0, 100, 15, key="y1", label_visibility="collapsed")
+        
+        st.markdown("<div class='slider-label'>Right (X2) %</div>", unsafe_allow_html=True)
+        x2 = st.slider("X2", 0, 100, 95, key="x2", label_visibility="collapsed")
+        
+        st.markdown("<div class='slider-label'>Bottom (Y2) %</div>", unsafe_allow_html=True)
+        y2 = st.slider("Y2", 0, 100, 60, key="y2", label_visibility="collapsed")
+        
+        crop_box = (x1, y1, x2, y2) if x2 > x1 and y2 > y1 else None
         
         st.markdown("---")
         
         st.markdown("### 🔍 Preview Settings")
-        zoom_level = st.select_slider(
-            "Zoom Level",
-            options=[1.0, 1.5, 2.0, 2.5, 3.0],
-            value=st.session_state.zoom_level,
-            format_func=lambda x: f"{x}x"
-        )
-        st.session_state.zoom_level = zoom_level
+        zoom_level = st.select_slider("Zoom", options=[1.0, 1.5, 2.0, 2.5, 3.0], value=2.0, format_func=lambda x: f"{x}x")
         
         st.markdown("---")
         
-        st.markdown("### 📄 Page Settings")
-        preview_page = st.number_input("Preview Page", 1, 1000, 1, key="preview_page")
-        start_page = st.number_input("Start Page", 1, 1000, 1, key="start_page")
-        end_page = st.number_input("End Page (999=all)", 1, 1000, 999, key="end_page")
-        
-        st.markdown("---")
-        
-        st.markdown("### 🎨 Export Options")
         yellow_header = st.checkbox("Yellow Excel Header", value=True)
         
-        st.markdown("---")
-        
-        if st.button("🗑️ Clear All Data", type="secondary"):
+        if st.button("🗑️ Clear Data", type="secondary"):
             st.session_state.extracted_data = pd.DataFrame()
-            st.session_state.extraction_logs = []
-            st.session_state.preview_text = ""
             st.session_state.pdf_file = None
-            st.session_state.auto_preview = False
+            st.session_state.detected_columns = None
             st.rerun()
     
-    # Main content area
+    # Main content
     col1, col2 = st.columns([2, 1])
     
     with col1:
         st.markdown("<div class='section-header'><h3>📤 Upload PDF</h3></div>", unsafe_allow_html=True)
         
-        uploaded_file = st.file_uploader(
-            "Choose a PDF file containing BOQ tables",
-            type=['pdf'],
-            help="Upload a PDF with Bill of Quantities. Preview will generate automatically."
-        )
+        uploaded_file = st.file_uploader("Upload BOQ PDF", type=['pdf'])
         
         if uploaded_file:
-            st.success(f"✅ Loaded: {uploaded_file.name} ({uploaded_file.size:,} bytes)")
+            st.success(f"✅ Loaded: {uploaded_file.name}")
             st.session_state.pdf_file = uploaded_file
-            st.session_state.auto_preview = True
     
     with col2:
         st.markdown("<div class='section-header'><h3>🚀 Actions</h3></div>", unsafe_allow_html=True)
         
         if uploaded_file:
-            extract_btn = st.button("🔍 Extract BOQ", use_container_width=True, type="primary")
+            detect_btn = st.button("🔍 Auto Detect & Extract", use_container_width=True, type="primary")
+            preview_btn = st.button("👁️ Preview with Grid", use_container_width=True, type="secondary")
     
-    # AUTO-PREVIEW SECTION - Updates automatically when sliders change
-    if st.session_state.pdf_file and st.session_state.auto_preview:
-        st.markdown("<div class='section-header'><h3>🎯 Live Preview</h3></div>", unsafe_allow_html=True)
+    # Preview with Grid
+    if uploaded_file and preview_btn:
+        st.markdown("<div class='section-header'><h3>🎯 Visual Grid Preview</h3></div>", unsafe_allow_html=True)
         
-        # Check if crop coordinates changed to trigger re-render
-        if 'last_crop' not in st.session_state:
-            st.session_state.last_crop = current_crop
-            should_render = True
-        else:
-            should_render = st.session_state.last_crop != current_crop
-            if should_render:
-                st.session_state.last_crop = current_crop
-        
-        # Render preview
-        with st.spinner("Updating preview..."):
-            img_data, crop_coords_px, error = render_pdf_page(
-                st.session_state.pdf_file, 
-                preview_page, 
-                current_crop, 
-                zoom_level
+        with st.spinner("Detecting table structure..."):
+            img_data, columns, error = render_pdf_with_grid(
+                uploaded_file, 1, st.session_state.detector, zoom_level
             )
             
             if error:
                 st.error(f"Error: {error}")
             else:
-                # Display image with full width
-                st.image(img_data, caption=f"Page {preview_page} - Red box shows extraction area (Zoom: {zoom_level}x)", use_column_width=True)
+                st.session_state.detected_columns = columns
                 
-                # Show pixel dimensions if available
-                if crop_coords_px:
-                    st.markdown(f"""
-                    <div style="display: flex; gap: 2rem; margin-top: 0.5rem; color: #8b949e; font-size: 0.9rem;">
-                        <span>📐 Crop Area: {crop_coords_px['width']} × {crop_coords_px['height']} px</span>
-                        <span>📍 Position: ({crop_coords_px['x']}, {crop_coords_px['y']}) px</span>
-                    </div>
-                    """, unsafe_allow_html=True)
+                # Show image with grid
+                st.image(img_data, caption="Detected columns shown with blue vertical lines", use_column_width=True)
                 
-                # Two columns for details and sample text
-                col_details, col_text = st.columns([1, 1])
-                
-                with col_details:
-                    st.markdown("### 📊 Crop Coordinates")
-                    st.info(f"""
-                    **Current Selection:**
-                    - Left (X1): {x1}%
-                    - Top (Y1): {y1}%
-                    - Right (X2): {x2}%
-                    - Bottom (Y2): {y2}%
+                if columns:
+                    st.success(f"✅ Detected {len(columns)} columns automatically")
                     
-                    **Dimensions:**
-                    - Width: {crop_width_pct}% of page
-                    - Height: {crop_height_pct}% of page
+                    # Show column positions
+                    col_data = []
+                    for i, col in enumerate(columns, 1):
+                        col_data.append({
+                            "Column": f"Col {i}",
+                            "Position (px)": f"{col['x']:.0f}",
+                            "Char Count": col['chars']
+                        })
                     
-                    **Tips:**
-                    - Adjust sliders to cover the BOQ table
-                    - Red box shows what will be extracted
-                    - Higher zoom = more precise selection
-                    """)
-                
-                with col_text:
-                    # Extract and show sample text
-                    sample_text = extract_text_from_region(st.session_state.pdf_file, preview_page, current_crop)
-                    st.session_state.preview_text = sample_text
-                    
-                    if sample_text:
-                        st.markdown("### 📝 Sample Extracted Text")
-                        st.markdown(f"<div class='extracted-text'>{sample_text[:1500]}{'...' if len(sample_text) > 1500 else ''}</div>", unsafe_allow_html=True)
-                        
-                        # Parse sample
-                        parser = BOQParser()
-                        sample_items = parser.parse_text_block(sample_text)
-                        
-                        if sample_items:
-                            st.success(f"✅ Found {len(sample_items)} items in preview")
-                        else:
-                            st.warning("⚠️ No BOQ items detected. Adjust region or check format.")
-                    else:
-                        st.warning("No text found in selected region")
+                    st.markdown("### 📊 Detected Column Positions")
+                    st.dataframe(pd.DataFrame(col_data), hide_index=True, use_container_width=True)
+                else:
+                    st.warning("⚠️ No columns detected. Try adjusting crop region.")
     
-    # EXTRACTION SECTION
-    if uploaded_file and extract_btn:
-        st.markdown("<div class='section-header'><h3>⚙️ Processing</h3></div>", unsafe_allow_html=True)
+    # Auto Detect & Extract
+    if uploaded_file and detect_btn:
+        st.markdown("<div class='section-header'><h3>⚙️ Smart Extraction</h3></div>", unsafe_allow_html=True)
         
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
-        def update_progress(progress, message):
-            progress_bar.progress(progress, message)
-        
-        with st.spinner("Extracting BOQ data..."):
-            items, logs = process_pdf_batch(uploaded_file, start_page, end_page, current_crop, update_progress)
+        with st.spinner("Analyzing table content..."):
+            items, raw_text, error = extract_with_smart_detection(
+                uploaded_file, 1, crop_box, st.session_state.detector
+            )
             
-            st.session_state.extraction_logs = logs
-            
-            if items:
+            if error:
+                st.error(f"Extraction error: {error}")
+            elif items:
                 df = pd.DataFrame(items)
                 st.session_state.extracted_data = df
-                progress_bar.empty()
-                status_text.success(f"✅ Successfully extracted {len(df)} items!")
+                
+                st.success(f"✅ Extracted {len(df)} items (Items 1-{max_items})")
+                
+                # Show raw text preview
+                with st.expander("📝 View Raw Extracted Text"):
+                    st.markdown(f"<div class='extracted-text'>{raw_text[:2000]}</div>", unsafe_allow_html=True)
             else:
-                progress_bar.empty()
-                status_text.error("❌ No items extracted. Check region settings.")
+                st.warning("⚠️ No items found. Check if table is in selected region.")
     
-    # RESULTS SECTION
+    # Results
     if not st.session_state.extracted_data.empty:
         df = st.session_state.extracted_data
         
         st.markdown("<div class='section-header'><h3>📊 Extraction Results</h3></div>", unsafe_allow_html=True)
         
-        # Statistics
-        c1, c2, c3, c4 = st.columns(4)
-        
+        # Stats
+        c1, c2, c3 = st.columns(3)
         with c1:
             st.markdown(f"""
             <div class="stat-card">
                 <div class="stat-value">{len(df)}</div>
-                <div class="stat-label">Total Items</div>
+                <div class="stat-label">Items Extracted</div>
             </div>
             """, unsafe_allow_html=True)
         
         with c2:
-            unique_drawings = df['Drawing No'].nunique() if 'Drawing No' in df.columns else 0
-            st.markdown(f"""
-            <div class="stat-card">
-                <div class="stat-value">{unique_drawings}</div>
-                <div class="stat-label">Drawings</div>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        with c3:
-            unique_materials = df['Material'].nunique() if 'Material' in df.columns else 0
-            st.markdown(f"""
-            <div class="stat-card">
-                <div class="stat-value">{unique_materials}</div>
-                <div class="stat-label">Materials</div>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        with c4:
             total_qty = int(df['Quantity'].sum()) if 'Quantity' in df.columns else 0
             st.markdown(f"""
             <div class="stat-card">
-                <div class="stat-value">{total_qty:,}</div>
+                <div class="stat-value">{total_qty}</div>
                 <div class="stat-label">Total Quantity</div>
             </div>
             """, unsafe_allow_html=True)
         
-        # Data Editor
-        st.markdown("### ✏️ Review and Edit Data")
+        with c3:
+            materials = df['Material'].nunique() if 'Material' in df.columns else 0
+            st.markdown(f"""
+            <div class="stat-card">
+                <div class="stat-value">{materials}</div>
+                <div class="stat-label">Materials</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        # Data editor
+        st.markdown("### ✏️ Review Data")
         
         edited_df = st.data_editor(
             df,
@@ -944,99 +821,72 @@ def main():
             use_container_width=True,
             hide_index=True,
             column_config={
-                "Drawing No": st.column_config.TextColumn("Drawing No", width="medium"),
-                "Page": st.column_config.NumberColumn("Page", width="small"),
-                "Item No": st.column_config.NumberColumn("Item No", width="small"),
+                "Item No": st.column_config.NumberColumn("Item", width="small"),
                 "Quantity": st.column_config.NumberColumn("Qty", width="small"),
-                "Part No": st.column_config.TextColumn("Part No", width="medium"),
+                "Fig No": st.column_config.TextColumn("Fig No", width="medium"),
                 "Description": st.column_config.TextColumn("Description", width="large"),
                 "Material": st.column_config.TextColumn("Material", width="medium"),
             }
         )
         
-        # Export options
-        st.markdown("<div class='section-header'><h3>📦 Export Data</h3></div>", unsafe_allow_html=True)
+        # Export
+        st.markdown("<div class='section-header'><h3>📦 Export</h3></div>", unsafe_allow_html=True)
         
         col_excel, col_csv = st.columns(2)
-        
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
         with col_excel:
             try:
                 excel_data = create_excel_download(edited_df, yellow_header)
                 st.download_button(
-                    label="📥 Download Excel (.xlsx)",
+                    label="📥 Download Excel",
                     data=excel_data,
-                    file_name=f"BOQ_Extract_{timestamp}.xlsx",
+                    file_name=f"BOQ_Auto_{timestamp}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     use_container_width=True
                 )
             except Exception as e:
-                st.error(f"Excel export error: {str(e)}")
+                st.error(f"Export error: {e}")
         
         with col_csv:
             csv_data = edited_df.to_csv(index=False).encode('utf-8')
             st.download_button(
-                label="📄 Download CSV (.csv)",
+                label="📄 Download CSV",
                 data=csv_data,
-                file_name=f"BOQ_Extract_{timestamp}.csv",
+                file_name=f"BOQ_Auto_{timestamp}.csv",
                 mime="text/csv",
                 use_container_width=True
             )
     
-    # Logs
-    if st.session_state.extraction_logs:
-        with st.expander("🔍 Processing Logs", expanded=False):
-            for log in st.session_state.extraction_logs:
-                if log.startswith("✅"):
-                    st.markdown(f"<span style='color: #3fb950;'>{log}</span>", unsafe_allow_html=True)
-                elif log.startswith("❌"):
-                    st.markdown(f"<span style='color: #f85149;'>{log}</span>", unsafe_allow_html=True)
-                elif log.startswith("⚠️"):
-                    st.markdown(f"<span style='color: #d29922;'>{log}</span>", unsafe_allow_html=True)
-                else:
-                    st.markdown(f"<span style='color: #58a6ff;'>{log}</span>", unsafe_allow_html=True)
-    
     # Instructions
-    with st.expander("📖 How to Use", expanded=False):
+    with st.expander("📖 How Auto Detection Works"):
         st.markdown("""
-        ### Quick Start Guide
-
-        **1. Upload PDF** 📤
-        - Upload your BOQ PDF file
-        - Preview generates **automatically**
+        ### 🤖 Smart Table Detection
         
-        **2. Adjust Crop Region** 📐
-        - Use X1, Y1, X2, Y2 sliders in sidebar
-        - Watch preview update **live**
-        - Check "Crop Size" for dimensions
+        **1. Content-Based Detection**
+        - Detects columns by analyzing text positions
+        - No need for visible grid lines
+        - Identifies: Item No | Qty | Fig No | Description | Material
         
-        **3. Fine-tune Zoom** 🔍
-        - Select zoom level (1x - 3x)
-        - Higher zoom = more precise selection
+        **2. Visual Grid Overlay**
+        - Blue lines show detected column boundaries
+        - Helps verify correct detection
+        - Adjust crop region if needed
         
-        **4. Extract Data** 🔍
-        - Click "Extract BOQ" button
-        - Review extracted items
+        **3. Smart Parsing**
+        - Recognizes Fig No patterns: F125-M36, V2-21-TS2, PC3-400
+        - Extracts materials: A36, A105, A193 GR.B7, Per MSS-SP58
+        - Stops at item 15 (excludes Spring details section)
         
-        **5. Export** 📦
-        - Download as Excel (yellow headers) or CSV
-        - Edit data in the table before export if needed
-        
-        ### Supported Formats
-        - **Item No**: 1, 2, 3...
-        - **Quantity**: Integer numbers
-        - **Part No**: M1-V1, V2-26-BM1, etc.
-        - **Material**: A240 SS316, A36, etc.
+        **4. Manual Adjustments**
+        - Use crop sliders to focus on table area
+        - Change "Max Items" if needed
+        - Edit data before export
         """)
     
-    # Footer
     st.markdown("""
     <div class="footer">
-        <p>📋 BOQ Extractor Pro v14.0 | Dark Edition</p>
-        <p style="font-size: 0.8rem; color: #8b949e;">
-            Auto-preview | Live crop adjust | Excel export
-        </p>
+        <p>📋 BOQ Extractor Pro v15.0 | Auto Detection Edition</p>
     </div>
     """, unsafe_allow_html=True)
 
