@@ -1,38 +1,50 @@
-# BOQ Extractor Pro v27 - Material Column Fix
+# BOQ Extractor Pro v28 - Material Separation
 
-## Problem Identified
-Material column was empty because:
-1. Crop area (Z/Right slider) was too narrow, excluding Material column
-2. Material detection was looking in wrong position
+## Problem Solved
+**Material was merging into Description column**
 
-## Solution
-1. **Warning system**: Shows alert if Z < 85% (Material column likely cut off)
-2. **Better parsing**: Material column detected from END of line
-3. **Debug mode**: View raw extracted text to verify columns
-4. **Stats**: Shows how many items have materials detected
+### Before (Wrong):
+| Description | Material |
+|-------------|----------|
+| bronze Graphite bronze-190SQx5mm | (empty) |
+| Variable Effort Support Per MSS-SP58 | (empty) |
+| Inverted Beam Welding Attachment A36 | (empty) |
 
-## How to Fix Empty Material Column
+### After (Correct):
+| Description | Material |
+|-------------|----------|
+| bronze Graphite bronze-190SQx5mm | (empty - no material spec) |
+| Variable Effort Support | Per MSS-SP58 |
+| Inverted Beam Welding Attachment | A36 |
+| Full Nut | A194 GR.2H |
+| Weldless Eye Nut | A105 |
+| Pipe Clamp 2 Bolt | A36 |
 
-### Step 1: Check Crop Area
-- **Z (Right) slider**: Must be 90-95% to include Material column
-- If Z < 85%, you'll see red warning: "Expand Z to include Material column"
+## How It Works
 
-### Step 2: Verify with Debug
-- Enable "Debug" checkbox
-- Check "Raw Text" to see if Material column text appears
+### Material Separation Logic:
+1. Extract full text after Fig No
+2. Search for material patterns from **END** of text:
+   - `Per MSS-SP58`
+   - `A194 GR.2H`
+   - `A36`
+   - `SS316`
+   - etc.
+3. Split text at material position
+4. Everything before = Description
+5. Material pattern = Material column
 
-### Step 3: Material Detection
-Material keywords detected:
-- A36, A105, A193, A194, A240, A516
-- SS316, SS316L, SS304, SS304L
+### Material Patterns Detected:
 - Per MSS-SP58, MSS-SP58
+- A194 GR.2H, A193 GR.B7
+- A240 SS316, SS316, SS316L
+- A36, A105, A516
 - Gr. 8.8, Grade 8.8
 - CI. 8, Cast Iron
-- Bronze, Graphite, PTFE
+- And more...
 
-## Expected Output
-| Item | Qty | Fig No | Description | Material |
-|------|-----|--------|-------------|----------|
-| 1 | 1 | PTFE | PTFE-140SQx3mm | (empty) |
-| 2 | 1 | V1-22-BM1 | Variable Effort Support | Per MSS-SP58 |
-| 3 | 1 | 3x190x190 | SS Plate(mirror finish) | A240 SS316 |
+## Usage
+1. Upload PDF
+2. Adjust crop to include all columns
+3. Click EXTRACT
+4. Material automatically separated from Description

@@ -52,22 +52,78 @@ st.markdown("""
     .extract-btn { background: linear-gradient(90deg, #238636 0%, #2ea043 100%) !important; color: white !important; font-weight: 600 !important; padding: 1rem !important; font-size: 1.1rem !important; }
     .info-box { background: rgba(31, 111, 235, 0.1); border: 1px solid #1f6feb; border-radius: 6px; padding: 0.75rem; margin: 0.5rem 0; font-size: 0.85rem; }
     .warning-box { background: rgba(248, 81, 73, 0.1); border: 1px solid #f85149; border-radius: 6px; padding: 0.75rem; margin: 0.5rem 0; }
+    .success-box { background: rgba(35, 134, 54, 0.1); border: 1px solid #238636; border-radius: 6px; padding: 0.75rem; margin: 0.5rem 0; }
 </style>
 """, unsafe_allow_html=True)
 
-class BOQParser:
-    """Parse BOQ with proper column separation including Material column"""
+class MaterialSeparator:
+    """Separate Material from Description"""
 
     def __init__(self):
-        self.material_keywords = [
-            "A36", "A105", "A193", "A194", "A240", "A516",
-            "SS316", "SS316L", "SS304", "SS304L", "Stainless Steel",
-            "Per MSS-SP", "MSS-SP", "Gr.", "Grade", "CI.", "Cast Iron",
-            "Bronze", "Graphite", "PTFE", "Carbon Steel"
+        # Material patterns - ordered by specificity (most specific first)
+        self.material_patterns = [
+            (r"Per\s+MSS\-SP\d+", "Per MSS-SP"),  # Per MSS-SP58
+            (r"MSS\-SP\d+", "MSS-SP"),  # MSS-SP58
+            (r"A194\s+GR\.?2H", "A194 GR.2H"),  # A194 GR.2H
+            (r"A193\s+GR\.?B7", "A193 GR.B7"),  # A193 GR.B7
+            (r"A240\s+SS316L?", "A240 SS316"),  # A240 SS316
+            (r"SS316L?", "SS316"),  # SS316, SS316L
+            (r"SS304L?", "SS304"),  # SS304, SS304L
+            (r"A516", "A516"),  # A516
+            (r"A240", "A240"),  # A240
+            (r"A194", "A194"),  # A194
+            (r"A193", "A193"),  # A193
+            (r"A105", "A105"),  # A105
+            (r"A36\b", "A36"),  # A36 (word boundary)
+            (r"Gr\.?\s*\d+\.?\d*", "Grade"),  # Gr. 8.8, Gr.2H
+            (r"CI\.?\s*\d+", "CI"),  # CI. 8
+            (r"Cast\s+Iron", "Cast Iron"),  # Cast Iron
+            (r"Stainless\s+Steel", "Stainless Steel"),  # Stainless Steel
+            (r"Carbon\s+Steel", "Carbon Steel"),  # Carbon Steel
+            (r"Graphite\s+bronze", "Graphite bronze"),  # Graphite bronze
+            (r"Graphite", "Graphite"),  # Graphite
+            (r"Bronze", "Bronze"),  # Bronze
+            (r"PTFE", "PTFE"),  # PTFE
         ]
 
-    def extract_from_line(self, line: str) -> Dict:
-        """Extract all columns from a BOQ line"""
+    def separate(self, description: str) -> Tuple[str, str]:
+        """
+        Separate Material from Description
+        Returns: (clean_description, material)
+        """
+        if not description:
+            return "", ""
+
+        # Search for material patterns from the END of the string
+        for pattern, mat_type in self.material_patterns:
+            # Find all matches
+            matches = list(re.finditer(pattern, description, re.IGNORECASE))
+            if matches:
+                # Get the last match (closest to end)
+                last_match = matches[-1]
+
+                # Extract material
+                material = last_match.group(0)
+
+                # Everything before the material is description
+                clean_desc = description[:last_match.start()].strip(" -:/\t")
+
+                # Remove trailing "Per" if present (common pattern)
+                clean_desc = re.sub(r"\s+Per\s*$", "", clean_desc, flags=re.IGNORECASE)
+
+                return clean_desc, material
+
+        # No material found
+        return description, ""
+
+class BOQExtractor:
+    """Extract BOQ with proper column separation"""
+
+    def __init__(self):
+        self.material_sep = MaterialSeparator()
+
+    def extract_line(self, line: str) -> Dict:
+        """Extract columns from a BOQ line"""
         parts = line.split()
         if len(parts) < 3 or not parts[0].isdigit():
             return None
@@ -82,97 +138,41 @@ class BOQParser:
                 qty = int(parts[idx])
                 idx += 1
 
-            # FIG NO (can be 1 or 2 words: PTFE, Graphite bronze, V1-22-BM1, 3x190x190)
+            # FIG NO (can be 1 or 2 words)
             fig_no = ""
             if idx < len(parts):
                 fig_no = parts[idx]
                 idx += 1
 
-                # Check for 2-word FIG NO (Graphite bronze, SS Plate, etc.)
+                # Check for 2-word FIG NO
                 if idx < len(parts):
                     next_word = parts[idx]
                     if next_word.lower() in ["bronze", "plate", "steel", "pad", "sheet"]:
-                        # Make sure it's not a material specification
-                        if not self._is_material_keyword(next_word):
-                            fig_no += " " + next_word
-                            idx += 1
+                        fig_no += " " + next_word
+                        idx += 1
 
-            # Now we need to split remaining into DESCRIPTION and MATERIAL
-            # Material is typically at the END of the line in a separate column
+            # Everything else is Description + Material combined
             remaining = parts[idx:] if idx < len(parts) else []
+            full_text = " ".join(remaining)
 
-            description = ""
-            material = ""
-
-            if remaining:
-                # Strategy: Look for material keywords from the END
-                # Material column usually contains: A36, SS316, Per MSS-SP58, Gr. 8.8, etc.
-
-                material_idx = len(remaining)
-                for i in range(len(remaining) - 1, -1, -1):
-                    check_text = " ".join(remaining[i:])
-                    if self._is_material(check_text):
-                        material_idx = i
-                        material = check_text
-                        break
-
-                # Everything before material index is description
-                if material_idx > 0:
-                    description = " ".join(remaining[:material_idx])
-                elif material_idx == len(remaining):
-                    # No material found, everything is description
-                    description = " ".join(remaining)
+            # Separate Material from Description
+            clean_desc, material = self.material_sep.separate(full_text)
 
             return {
                 "Item": item_no,
                 "Qty": qty,
                 "Fig No": fig_no,
-                "Description": description,
+                "Description": clean_desc,
                 "Material": material
             }
 
         except Exception as e:
             return None
 
-    def _is_material_keyword(self, word: str) -> bool:
-        """Check if word is a material keyword"""
-        return word.upper() in ["A36", "SS316", "SS304", "BRONZE", "GRAPHITE", "PTFE"]
-
-    def _is_material(self, text: str) -> bool:
-        """Check if text matches material patterns"""
-        text_upper = text.upper()
-
-        # Direct material codes
-        patterns = [
-            r"^A\d+\\b",  # A36, A105, A193, etc.
-            r"^SS\\d+\\b",  # SS316, SS304
-            r"^Per\\s+MSS\\-SP\\d+",  # Per MSS-SP58
-            r"^MSS\\-SP\\d+",  # MSS-SP58
-            r"^Gr\\.\\s*\\d+",  # Gr. 8.8
-            r"^Grade\\s*\\d+",  # Grade 8.8
-            r"^CI\\.\\s*\\d+",  # CI. 8
-            r"^Cast\\s+Iron",  # Cast Iron
-            r"^Stainless\\s+Steel",  # Stainless Steel
-            r"^Carbon\\s+Steel",  # Carbon Steel
-        ]
-
-        for pattern in patterns:
-            if re.match(pattern, text_upper):
-                return True
-
-        # Check for material keywords
-        for kw in self.material_keywords:
-            if kw.upper() in text_upper:
-                # Make sure it's not part of a larger word
-                if re.search(r"\\b" + re.escape(kw) + r"\\b", text_upper):
-                    return True
-
-        return False
-
-def extract_boq_v27(pdf_bytes: bytes, crop: Tuple, max_items: int) -> List[Dict]:
-    """Extract BOQ with proper Material column detection"""
+def extract_boq_v28(pdf_bytes: bytes, crop: Tuple, max_items: int) -> List[Dict]:
+    """Extract BOQ with Material separation"""
     items = []
-    parser = BOQParser()
+    extractor = BOQExtractor()
 
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
         for page_num in range(1, len(pdf.pages) + 1):
@@ -190,7 +190,7 @@ def extract_boq_v27(pdf_bytes: bytes, crop: Tuple, max_items: int) -> List[Dict]
                 if not line or not line[0].isdigit():
                     continue
 
-                result = parser.extract_from_line(line)
+                result = extractor.extract_line(line)
                 if result and result["Item"] <= max_items:
                     result["Page"] = page_num
                     items.append(result)
@@ -266,10 +266,8 @@ if "target_bytes" not in st.session_state:
     st.session_state.target_bytes = None
 if "data" not in st.session_state:
     st.session_state.data = None
-if "show_debug" not in st.session_state:
-    st.session_state.show_debug = False
 
-st.title("📋 BOQ Extractor Pro v27 - Material Column Fix")
+st.title("📋 BOQ Extractor Pro v28 - Material Separation")
 
 # TOP BAR
 st.markdown("<div class='upload-bar'>", unsafe_allow_html=True)
@@ -296,10 +294,10 @@ st.markdown("</div>", unsafe_allow_html=True)
 # MAIN LAYOUT
 left_col, right_col = st.columns([1, 2.5])
 
-# LEFT - Preview & Settings
+# LEFT - Preview
 with left_col:
     st.markdown("<div class='left-panel'>", unsafe_allow_html=True)
-    st.write("👁️ Preview & Crop Settings")
+    st.write("👁️ Preview & Settings")
 
     x = st.slider("X (Left)", 0, 100, 5)
     y = st.slider("Y (Top)", 0, 100, 15)
@@ -311,19 +309,12 @@ with left_col:
 
     crop = (x, y, z, w)
 
-    # Show crop percentage
-    st.caption(f"Crop: {z-x}% wide × {w-y}% tall")
-
-    # IMPORTANT: Show warning if crop excludes Material column
-    if z < 85:
-        st.markdown("<div class='warning-box'>⚠️ Expand Z (Right) to include Material column</div>", unsafe_allow_html=True)
-
     if st.session_state.target_bytes:
         img = render_preview(st.session_state.target_bytes, 1, crop, 2.0)
         if img:
             st.image(img, use_column_width=True)
     else:
-        st.info("Upload PDF to preview")
+        st.info("Upload PDF")
 
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -332,43 +323,25 @@ with right_col:
     st.markdown("<div class='right-panel'>", unsafe_allow_html=True)
 
     if st.session_state.target_bytes:
-        col_btn1, col_btn2 = st.columns([3, 1])
-        with col_btn1:
-            if st.button("🔍 EXTRACT BOQ DATA", key="extract_btn", use_container_width=True):
-                progress = st.progress(0, text="Extracting...")
+        if st.button("🔍 EXTRACT BOQ DATA", key="extract_btn", use_container_width=True):
+            progress = st.progress(0, text="Extracting...")
 
-                items = extract_boq_v27(
-                    st.session_state.target_bytes,
-                    crop,
-                    15
-                )
+            items = extract_boq_v28(
+                st.session_state.target_bytes,
+                crop,
+                15
+            )
 
-                progress.empty()
+            progress.empty()
 
-                if items:
-                    st.session_state.data = pd.DataFrame(items)
-                    st.success(f"✅ Extracted {len(items)} items!")
+            if items:
+                st.session_state.data = pd.DataFrame(items)
 
-                    # Check if materials were found
-                    materials_found = sum(1 for item in items if item.get("Material"))
-                    if materials_found == 0:
-                        st.warning("⚠️ No materials detected. Try expanding crop area to include Material column.")
-                else:
-                    st.error("No items found")
-
-        with col_btn2:
-            st.session_state.show_debug = st.checkbox("Debug", value=False)
-
-    # Debug view
-    if st.session_state.show_debug and st.session_state.target_bytes:
-        with st.expander("Raw Text (Debug)"):
-            with pdfplumber.open(io.BytesIO(st.session_state.target_bytes)) as pdf:
-                page = pdf.pages[0]
-                if crop:
-                    w, h = page.width, page.height
-                    page = page.crop((w*crop[0]/100, h*crop[1]/100, w*crop[2]/100, h*crop[3]/100))
-                text = page.extract_text() or "No text found"
-                st.text(text[:2000])
+                # Show separation stats
+                with_material = sum(1 for item in items if item.get("Material"))
+                st.success(f"✅ Extracted {len(items)} items! ({with_material} with Material)")
+            else:
+                st.error("No items found")
 
     # TABLE
     if st.session_state.data is not None and not st.session_state.data.empty:
@@ -376,17 +349,19 @@ with right_col:
 
         # Stats
         total = len(df)
-        with_material = (df["Material"] != "").sum()
-        without_material = total - with_material
+        with_mat = (df["Material"] != "").sum()
+        without_mat = total - with_mat
 
         cols_stats = st.columns(3)
-        cols_stats[0].metric("Total Items", total)
-        cols_stats[1].metric("With Material", with_material, 
-                           delta=f"{with_material}" if with_material > 0 else "Check crop")
-        cols_stats[2].metric("Missing Material", without_material)
+        cols_stats[0].metric("Total", total)
+        cols_stats[1].metric("With Material", with_mat, 
+                           delta=f"{with_mat}/{total}" if with_mat > 0 else None)
+        cols_stats[2].metric("No Material", without_mat)
 
-        if without_material > 0 and without_material == total:
-            st.markdown("<div class='warning-box'>⚠️ All items missing Material. Expand crop to include rightmost column.</div>", unsafe_allow_html=True)
+        if with_mat > 0:
+            st.markdown("<div class='success-box'>✅ Material successfully separated from Description!</div>", unsafe_allow_html=True)
+        else:
+            st.markdown("<div class='warning-box'>⚠️ No materials detected. Check if your BOQ has a Material column.</div>", unsafe_allow_html=True)
 
         # Editable table
         edited_df = st.data_editor(
