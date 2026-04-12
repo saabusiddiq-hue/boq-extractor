@@ -1,4 +1,5 @@
-# System packages for BOQ Extractor Pro
+poppler-utils
+ges for BOQ Extractor Pro
 # These are installed via apt-get on Streamlit Cloud
 
 # PDF processing dependencies
