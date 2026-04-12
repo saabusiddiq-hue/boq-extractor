@@ -1,8 +1,3 @@
-"""
-BOQ Extractor Pro v22.0 - CLEAN INFRASTRUCTURE
-Layout: Preview(left) + Controls(top) + Table(bottom)
-"""
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -10,6 +5,7 @@ import io
 import re
 import shutil
 from datetime import datetime
+from typing import List, Dict, Tuple
 
 # Setup
 TESSERACT_PATH = shutil.which("tesseract")
@@ -25,13 +21,13 @@ if TESSERACT_PATH:
 try:
     import pdfplumber
 except ImportError:
-    st.error("❌ pdfplumber not found")
+    st.error("pdfplumber not found")
     st.stop()
 
 try:
     import fitz
 except ImportError:
-    st.error("❌ PyMuPDF not found")
+    st.error("PyMuPDF not found")
     st.stop()
 
 from PIL import Image, ImageEnhance, ImageFilter
@@ -41,235 +37,142 @@ try:
     from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
     from openpyxl.utils import get_column_letter
 except ImportError:
-    st.error("❌ openpyxl not found")
+    st.error("openpyxl not found")
     st.stop()
 
 st.set_page_config(page_title="BOQ Extractor Pro", page_icon="📋", layout="wide")
 
-# Custom CSS matching the sketch
 st.markdown("""
 <style>
-    /* Main layout */
     .stApp { background-color: #0d1117; }
-
-    /* Header bar */
-    .top-bar {
-        background: #161b22;
-        border: 1px solid #30363d;
-        border-radius: 8px;
-        padding: 1rem;
-        margin-bottom: 1rem;
-        display: flex;
-        align-items: center;
-        gap: 1rem;
-    }
-
-    .upload-flow {
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-        background: #21262d;
-        padding: 0.5rem 1rem;
-        border-radius: 6px;
-        border: 1px solid #30363d;
-    }
-
-    .arrow {
-        color: #58a6ff;
-        font-size: 1.2rem;
-    }
-
-    /* Preview box */
-    .preview-box {
-        background: #161b22;
-        border: 2px solid #30363d;
-        border-radius: 8px;
-        padding: 1rem;
-        height: 400px;
-        display: flex;
-        flex-direction: column;
-    }
-
-    .preview-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 0.5rem;
-        padding-bottom: 0.5rem;
-        border-bottom: 1px solid #30363d;
-    }
-
-    .icon-btn {
-        background: none;
-        border: none;
-        color: #8b949e;
-        cursor: pointer;
-        padding: 0.25rem;
-    }
-
-    .icon-btn:hover {
-        color: #58a6ff;
-    }
-
-    /* Sliders */
-    .slider-container {
-        background: #161b22;
-        border: 1px solid #30363d;
-        border-radius: 8px;
-        padding: 1rem;
-        margin-top: 1rem;
-    }
-
-    .slider-label {
-        color: #8b949e;
-        font-size: 0.8rem;
-        margin-bottom: 0.25rem;
-    }
-
-    /* Analyze button */
-    .analyze-btn {
-        background: linear-gradient(90deg, #238636 0%, #2ea043 100%);
-        color: white;
-        border: none;
-        padding: 0.75rem 2rem;
-        border-radius: 6px;
-        font-weight: 600;
-        cursor: pointer;
-        width: 100%;
-        margin: 1rem 0;
-    }
-
-    .analyze-btn:hover {
-        opacity: 0.9;
-    }
-
-    /* Progress bar */
-    .progress-container {
-        background: #21262d;
-        border: 1px solid #30363d;
-        border-radius: 6px;
-        height: 30px;
-        margin: 1rem 0;
-        overflow: hidden;
-    }
-
-    .progress-bar {
-        height: 100%;
-        background: linear-gradient(90deg, #1f6feb 0%, #58a6ff 100%);
-        transition: width 0.3s ease;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        color: white;
-        font-size: 0.8rem;
-        font-weight: 600;
-    }
-
-    /* Table area */
-    .table-container {
-        background: #161b22;
-        border: 1px solid #30363d;
-        border-radius: 8px;
-        padding: 1rem;
-        margin-top: 1rem;
-        min-height: 300px;
-    }
-
-    /* Material highlight */
-    .material-tag {
-        background: rgba(31, 111, 235, 0.2);
-        color: #58a6ff;
-        padding: 2px 8px;
-        border-radius: 4px;
-        font-size: 0.85rem;
-        font-weight: 500;
-    }
-
-    /* Streamlit overrides */
-    .stButton > button {
-        width: 100%;
-        border-radius: 6px;
-        background: #238636;
-        color: white;
-        border: none;
-        padding: 0.5rem;
-    }
-
-    .stButton > button:hover {
-        background: #2ea043;
-    }
-
-    div[data-testid="stVerticalBlock"] > div[data-testid="stHorizontalBlock"] {
-        gap: 1rem;
-    }
+    .upload-bar { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; margin-bottom: 1rem; }
+    .left-panel { background: #161b22; border: 2px solid #30363d; border-radius: 8px; padding: 1rem; }
+    .right-panel { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; min-height: 600px; }
+    .extract-btn { background: linear-gradient(90deg, #238636 0%, #2ea043 100%) !important; color: white !important; font-weight: 600 !important; padding: 1rem !important; font-size: 1.1rem !important; }
+    .info-box { background: rgba(31, 111, 235, 0.1); border: 1px solid #1f6feb; border-radius: 6px; padding: 0.75rem; margin: 0.5rem 0; font-size: 0.85rem; }
+    .warning-box { background: rgba(248, 81, 73, 0.1); border: 1px solid #f85149; border-radius: 6px; padding: 0.75rem; margin: 0.5rem 0; }
+    .success-box { background: rgba(35, 134, 54, 0.1); border: 1px solid #238636; border-radius: 6px; padding: 0.75rem; margin: 0.5rem 0; }
 </style>
 """, unsafe_allow_html=True)
 
-# Materials list
-MATERIALS = [
-    "Graphite bronze", "Graphite", "Bronze", "PTFE", "Lead",
-    "SS304", "SS316", "SS316L", "Stainless Steel",
-    "A36", "A105", "A193", "A194", "A240", "A516",
-    "Carbon Steel", "Cast Iron", "CI"
-]
+class MaterialSeparator:
+    """Separate Material from Description - Improved for Graphite Bronze"""
 
-def extract_material(text):
-    """Extract material from description"""
-    if not text:
-        return text, ""
+    def __init__(self):
+        # Material patterns - ordered by specificity (most specific first)
+        self.material_patterns = [
+            (r"Per\s+MSS\-SP\d+", "Per MSS-SP"),
+            (r"MSS\-SP\d+", "MSS-SP"),
+            (r"A194\s+GR\.?2H", "A194 GR.2H"),
+            (r"A193\s+GR\.?B7", "A193 GR.B7"),
+            (r"A240\s+SS316L?", "A240 SS316"),
+            (r"SS316L?", "SS316"),
+            (r"SS304L?", "SS304"),
+            (r"A516", "A516"),
+            (r"A240", "A240"),
+            (r"A194", "A194"),
+            (r"A193", "A193"),
+            (r"A105", "A105"),
+            (r"A36\b", "A36"),
 
-    # Check start
-    for mat in sorted(MATERIALS, key=len, reverse=True):
-        pattern = rf"^({re.escape(mat)})\s*[-,:/]?\s*(.*)"
-        match = re.match(pattern, text, re.IGNORECASE)
-        if match:
-            return match.group(2).strip(), match.group(1)
+            # === GRAPHITE BRONZE - Made stronger and higher priority ===
+            (r"Graphite\s+Bronze", "Graphite Bronze"),
+            (r"Graphite\s+bronze", "Graphite bronze"),
+            (r"Bronze\s+Graphite", "Bronze Graphite"),
 
-    # Check end
-    for mat in sorted(MATERIALS, key=len, reverse=True):
-        pattern = rf"(.*?)\s*[-,:/]?\s*({re.escape(mat)})$"
-        match = re.match(pattern, text, re.IGNORECASE)
-        if match:
-            return match.group(1).strip(), match.group(2)
+            (r"Gr\.?\s*\d+\.?\d*", "Grade"),
+            (r"CI\.?\s*\d+", "CI"),
+            (r"Cast\s+Iron", "Cast Iron"),
+            (r"Stainless\s+Steel", "Stainless Steel"),
+            (r"Carbon\s+Steel", "Carbon Steel"),
 
-    return text, ""
+            # Single words - AFTER combined Graphite Bronze
+            (r"Graphite", "Graphite"),
+            (r"Bronze", "Bronze"),
+            (r"PTFE", "PTFE"),
+        ]
 
-@st.cache_data
-def render_preview(pdf_bytes, page_num, crop, zoom):
-    try:
-        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-        if page_num > len(doc):
+    def separate(self, description: str) -> Tuple[str, str]:
+        """
+        Separate Material from Description
+        Returns: (clean_description, material)
+        """
+        if not description:
+            return "", ""
+
+        # Search for material patterns from the END of the string
+        for pattern, mat_type in self.material_patterns:
+            matches = list(re.finditer(pattern, description, re.IGNORECASE))
+            if matches:
+                last_match = matches[-1]
+
+                material = last_match.group(0)
+
+                clean_desc = description[:last_match.start()].strip(" -:/\t")
+                clean_desc = re.sub(r"\s+Per\s*$", "", clean_desc, flags=re.IGNORECASE)
+                clean_desc = re.sub(r"\s*[-:]\s*$", "", clean_desc)   # Extra cleaning
+                clean_desc = clean_desc.strip()
+
+                return clean_desc, material
+
+        # No material found
+        return description.strip(), ""
+
+class BOQExtractor:
+    """Extract BOQ with proper column separation"""
+
+    def __init__(self):
+        self.material_sep = MaterialSeparator()
+
+    def extract_line(self, line: str) -> Dict:
+        """Extract columns from a BOQ line"""
+        parts = line.split()
+        if len(parts) < 3 or not parts[0].isdigit():
             return None
-        page = doc[page_num - 1]
 
-        if crop:
-            x1, y1, x2, y2 = crop
-            rect = page.rect
-            x1, y1 = rect.width * x1/100, rect.height * y1/100
-            x2, y2 = rect.width * x2/100, rect.height * y2/100
+        try:
+            item_no = int(parts[0])
 
-            shape = page.new_shape()
-            shape.draw_rect(fitz.Rect(x1, y1, x2, y2))
-            shape.finish(color=(0.97, 0.32, 0.29), fill=(0.97, 0.32, 0.29), fill_opacity=0.15, width=3)
-            shape.commit()
+            qty = 1
+            idx = 1
+            if idx < len(parts) and parts[idx].isdigit():
+                qty = int(parts[idx])
+                idx += 1
 
-        pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom))
-        return pix.tobytes("png")
-    except:
-        return None
+            fig_no = ""
+            if idx < len(parts):
+                fig_no = parts[idx]
+                idx += 1
+                if idx < len(parts):
+                    next_word = parts[idx]
+                    if next_word.lower() in ["bronze", "plate", "steel", "pad", "sheet"]:
+                        fig_no += " " + next_word
+                        idx += 1
 
-def extract_boq(pdf_bytes, crop, max_items, progress_bar):
-    """Extract BOQ data"""
+            remaining = parts[idx:] if idx < len(parts) else []
+            full_text = " ".join(remaining)
+
+            clean_desc, material = self.material_sep.separate(full_text)
+
+            return {
+                "Item": item_no,
+                "Qty": qty,
+                "Fig No": fig_no,
+                "Description": clean_desc,
+                "Material": material
+            }
+
+        except Exception:
+            return None
+
+def extract_boq_v28(pdf_bytes: bytes, crop: Tuple, max_items: int) -> List[Dict]:
     items = []
+    extractor = BOQExtractor()
 
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-        total_pages = len(pdf.pages)
-
-        for page_num in range(1, total_pages + 1):
-            progress = int((page_num / total_pages) * 100)
-            progress_bar.progress(progress, text=f"Processing page {page_num}/{total_pages}")
-
+        for page_num in range(1, len(pdf.pages) + 1):
             page = pdf.pages[page_num - 1]
+
             if crop:
                 w, h = page.width, page.height
                 page = page.crop((w*crop[0]/100, h*crop[1]/100, w*crop[2]/100, h*crop[3]/100))
@@ -282,45 +185,39 @@ def extract_boq(pdf_bytes, crop, max_items, progress_bar):
                 if not line or not line[0].isdigit():
                     continue
 
-                parts = line.split()
-                if len(parts) < 3:
-                    continue
-
-                try:
-                    item_no = int(parts[0])
-                    if item_no > max_items:
-                        continue
-
-                    qty = 1
-                    remaining = parts[1:]
-                    if remaining and remaining[0].isdigit():
-                        qty = int(remaining[0])
-                        remaining = remaining[1:]
-
-                    # Find part number
-                    part_no = ""
-                    desc_start = 0
-                    for i, part in enumerate(remaining[:4]):
-                        if re.match(r"^[A-Z0-9][-A-Z0-9x]+", part, re.IGNORECASE):
-                            part_no = part
-                            desc_start = i + 1
-                            break
-
-                    raw_desc = " ".join(remaining[desc_start:]) if desc_start < len(remaining) else ""
-                    clean_desc, material = extract_material(raw_desc)
-
-                    items.append({
-                        "Item": item_no,
-                        "Qty": qty,
-                        "Part No": part_no,
-                        "Description": clean_desc,
-                        "Material": material,
-                        "Page": page_num
-                    })
-                except:
-                    continue
+                result = extractor.extract_line(line)
+                if result and result["Item"] <= max_items:
+                    result["Page"] = page_num
+                    items.append(result)
 
     return items
+
+@st.cache_data
+def render_preview(pdf_bytes, page_num, crop, zoom):
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        if page_num > len(doc):
+            return None
+        page = doc[page_num - 1]
+
+        if crop and len(crop) == 4:
+            x1, y1, x2, y2 = crop
+            rect = page.rect
+            x1 = rect.width * x1 / 100
+            y1 = rect.height * y1 / 100
+            x2 = rect.width * x2 / 100
+            y2 = rect.height * y2 / 100
+
+            shape = page.new_shape()
+            shape.draw_rect(fitz.Rect(x1, y1, x2, y2))
+            shape.finish(color=(1, 0, 0), fill=(1, 0, 0), fill_opacity=0.1, width=2)
+            shape.commit()
+            page.insert_text(fitz.Point(x1 + 5, max(y1 - 5, 10)), "CROP", fontsize=10, color=(1, 0, 0))
+
+        pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom))
+        return pix.tobytes("png")
+    except:
+        return None
 
 def create_excel(df, yellow_header=True):
     output = io.BytesIO()
@@ -333,8 +230,8 @@ def create_excel(df, yellow_header=True):
     border = Border(left=Side(style="thin"), right=Side(style="thin"),
                    top=Side(style="thin"), bottom=Side(style="thin"))
 
-    cols = ["Item", "Qty", "Part No", "Description", "Material", "Page"]
-    df = df[cols]
+    cols = ["Item", "Qty", "Fig No", "Description", "Material", "Page"]
+    df = df[[c for c in cols if c in df.columns]]
 
     for col_num, header in enumerate(df.columns, 1):
         cell = ws.cell(row=1, column=col_num, value=header)
@@ -359,164 +256,131 @@ def create_excel(df, yellow_header=True):
     wb.save(output)
     return output.getvalue()
 
-# Initialize session
-if "sample_file" not in st.session_state:
-    st.session_state.sample_file = None
-if "target_file" not in st.session_state:
-    st.session_state.target_file = None
-if "extracted_data" not in st.session_state:
-    st.session_state.extracted_data = None
+# Session init
+if "target_bytes" not in st.session_state:
+    st.session_state.target_bytes = None
+if "data" not in st.session_state:
+    st.session_state.data = None
 
-# ==================== UI LAYOUT ====================
+st.title("📋 BOQ Extractor Pro v29 - Improved Graphite Bronze")
 
-# TOP BAR: Upload Flow
-st.markdown("<div style='background:#161b22;border:1px solid #30363d;border-radius:8px;padding:1rem;margin-bottom:1rem;'>", unsafe_allow_html=True)
+# TOP BAR
+st.markdown("<div class='upload-bar'>", unsafe_allow_html=True)
 
-col1, col2, col3, col4 = st.columns([2, 0.5, 2, 3])
+col1, arr, col2 = st.columns([2, 0.3, 2])
 
 with col1:
-    st.markdown("📤 **Upload Sample**")
-    sample = st.file_uploader("Sample (JPG/PNG/PDF)", type=["jpg", "jpeg", "png", "pdf"], label_visibility="collapsed")
-    if sample:
-        st.session_state.sample_file = sample.read()
-        st.success("✓ Sample")
+    st.write("📤 Upload Sample (Optional)")
+    sample_file = st.file_uploader("Sample", type=["jpg", "jpeg", "png", "pdf"], label_visibility="collapsed")
+
+with arr:
+    st.write("&nbsp;")
+    st.markdown("<div style='padding-top:2rem;text-align:center;color:#58a6ff;'>→</div>", unsafe_allow_html=True)
 
 with col2:
-    st.markdown("<div style='text-align:center;padding-top:2rem;'><span style='color:#58a6ff;font-size:1.5rem;'>→</span></div>", unsafe_allow_html=True)
-
-with col3:
-    st.markdown("📄 **Upload Target PDF**")
-    target = st.file_uploader("Target PDF", type=["pdf"], label_visibility="collapsed")
-    if target:
-        st.session_state.target_file = target.read()
-        st.success("✓ Target")
-
-with col4:
-    if st.session_state.sample_file and OCR_AVAILABLE:
-        if st.button("🔍 Analyze Sample Image", use_container_width=True):
-            with st.spinner("Analyzing..."):
-                try:
-                    image = Image.open(io.BytesIO(st.session_state.sample_file))
-                    text = pytesseract.image_to_string(image)
-                    st.session_state.sample_text = text
-                    st.success("✅ Sample analyzed")
-                except:
-                    st.error("Analysis failed")
+    st.write("📄 Upload Target PDF *")
+    target_file = st.file_uploader("Target", type=["pdf"], label_visibility="collapsed")
+    if target_file:
+        st.session_state.target_bytes = target_file.read()
+        st.success("Target loaded")
 
 st.markdown("</div>", unsafe_allow_html=True)
 
-# MAIN LAYOUT: Left (Preview) + Right (Controls & Table)
+# MAIN LAYOUT
 left_col, right_col = st.columns([1, 2.5])
 
-# LEFT COLUMN: Preview & Settings
 with left_col:
-    st.markdown("<div class='preview-box'>", unsafe_allow_html=True)
+    st.markdown("<div class='left-panel'>", unsafe_allow_html=True)
+    st.write("👁️ Preview & Settings")
 
-    # Preview header with icons
-    st.markdown("""
-    <div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;padding-bottom:0.5rem;border-bottom:1px solid #30363d;'>
-        <span style='color:#8b949e;font-size:0.9rem;'>👁️ Preview</span>
-        <div>
-            <span style='color:#8b949e;cursor:pointer;margin-left:0.5rem;'>⚙️</span>
-            <span style='color:#8b949e;cursor:pointer;margin-left:0.5rem;'>🏠</span>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    x = st.slider("X (Left)", 0, 100, 5)
+    y = st.slider("Y (Top)", 0, 100, 15)
+    z = st.slider("Z (Right)", 0, 100, 95)
+    w = st.slider("W (Bottom)", 0, 100, 60)
 
-    # Preview image
-    if st.session_state.target_file:
-        x = st.slider("X (Left)", 0, 100, 5, key="x_slider")
-        y = st.slider("Y (Top)", 0, 100, 15, key="y_slider")
-        z = st.slider("Z (Right)", 0, 100, 95, key="z_slider")
-        w = st.slider("W (Bottom)", 0, 100, 60, key="w_slider")
+    if z <= x: z = min(x + 10, 100)
+    if w <= y: w = min(y + 10, 100)
 
-        if z <= x: z = min(x + 10, 100)
-        if w <= y: w = min(y + 10, 100)
+    crop = (x, y, z, w)
 
-        crop = (x, y, z, w)
-        zoom = 2.0
-
-        img = render_preview(st.session_state.target_file, 1, crop, zoom)
+    if st.session_state.target_bytes:
+        img = render_preview(st.session_state.target_bytes, 1, crop, 2.0)
         if img:
             st.image(img, use_column_width=True)
     else:
-        st.markdown("<div style='flex:1;display:flex;align-items:center;justify-content:center;color:#8b949e;'>No PDF loaded</div>", unsafe_allow_html=True)
+        st.info("Upload PDF")
 
     st.markdown("</div>", unsafe_allow_html=True)
 
-# RIGHT COLUMN: Analyze, Progress, Table
 with right_col:
-    # Analyze button
-    if st.session_state.target_file:
-        if st.button("🔍 ANALYZE SAMPLE IMAGE", use_container_width=True, type="primary"):
-            progress_bar = st.progress(0, text="Starting...")
+    st.markdown("<div class='right-panel'>", unsafe_allow_html=True)
 
-            with st.spinner("Extracting BOQ data..."):
-                items = extract_boq(
-                    st.session_state.target_file,
-                    (st.session_state.x_slider, st.session_state.y_slider, 
-                     st.session_state.z_slider, st.session_state.w_slider),
-                    15,
-                    progress_bar
-                )
+    if st.session_state.target_bytes:
+        if st.button("🔍 EXTRACT BOQ DATA", key="extract_btn", use_container_width=True):
+            progress = st.progress(0, text="Extracting...")
 
-                if items:
-                    st.session_state.extracted_data = pd.DataFrame(items)
-                    progress_bar.empty()
-                    st.success(f"✅ Extracted {len(items)} items")
-                else:
-                    progress_bar.empty()
-                    st.error("No items found")
+            items = extract_boq_v28(
+                st.session_state.target_bytes,
+                crop,
+                15
+            )
 
-    # Progress bar (shown during extraction)
-    # st.markdown("<div class='progress-container'><div class='progress-bar' style='width: 60%;'>60%</div></div>", unsafe_allow_html=True)
+            progress.empty()
 
-    # Table area
-    st.markdown("<div class='table-container'>", unsafe_allow_html=True)
+            if items:
+                st.session_state.data = pd.DataFrame(items)
+                with_material = sum(1 for item in items if item.get("Material"))
+                st.success(f"✅ Extracted {len(items)} items! ({with_material} with Material)")
+            else:
+                st.error("No items found")
 
-    if st.session_state.extracted_data is not None:
-        df = st.session_state.extracted_data
+    if st.session_state.data is not None and not st.session_state.data.empty:
+        df = st.session_state.data
 
-        # Editable table
+        total = len(df)
+        with_mat = (df["Material"] != "").sum()
+        without_mat = total - with_mat
+
+        cols_stats = st.columns(3)
+        cols_stats[0].metric("Total", total)
+        cols_stats[1].metric("With Material", with_mat)
+        cols_stats[2].metric("No Material", without_mat)
+
+        if with_mat > 0:
+            st.markdown("<div class='success-box'>✅ Material successfully separated!</div>", unsafe_allow_html=True)
+
         edited_df = st.data_editor(
             df,
             num_rows="dynamic",
             use_container_width=True,
             hide_index=True,
+            key="boq_table",
             column_config={
                 "Item": st.column_config.NumberColumn("Item", width="small"),
                 "Qty": st.column_config.NumberColumn("Qty", width="small"),
-                "Part No": st.column_config.TextColumn("Part No", width="medium"),
+                "Fig No": st.column_config.TextColumn("Fig No", width="medium"),
                 "Description": st.column_config.TextColumn("Description", width="large"),
                 "Material": st.column_config.TextColumn("Material", width="medium"),
                 "Page": st.column_config.NumberColumn("Page", width="small")
             }
         )
 
-        st.session_state.extracted_data = edited_df
+        st.session_state.data = edited_df
 
-        # Export buttons
-        col1, col2 = st.columns(2)
-        with col1:
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        st.divider()
+        col_excel, col_csv = st.columns(2)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        with col_excel:
             excel = create_excel(edited_df, True)
-            st.download_button(
-                "📥 Download Excel",
-                excel,
-                f"BOQ_{ts}.xlsx",
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True
-            )
-        with col2:
+            st.download_button("📥 Excel", excel, f"BOQ_{ts}.xlsx",
+                             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                             use_container_width=True)
+
+        with col_csv:
             csv = edited_df.to_csv(index=False).encode("utf-8")
-            st.download_button(
-                "📄 Download CSV",
-                csv,
-                f"BOQ_{ts}.csv",
-                "text/csv",
-                use_container_width=True
-            )
+            st.download_button("📄 CSV", csv, f"BOQ_{ts}.csv", "text/csv", use_container_width=True)
     else:
-        st.markdown("<div style='text-align:center;color:#8b949e;padding:3rem;'>Extracted data will appear here</div>", unsafe_allow_html=True)
+        st.info("BOQ data will appear here after extraction")
 
     st.markdown("</div>", unsafe_allow_html=True)
