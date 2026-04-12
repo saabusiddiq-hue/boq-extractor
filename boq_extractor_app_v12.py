@@ -1,6 +1,6 @@
 """
-BOQ Extractor Pro v16.0 - FINAL EDITION
-Clean Layout | Red Crop Preview | Smart Detection | Multi-Page Support
+BOQ Extractor Pro v16.1 - FINAL EDITION (BUG FIX)
+Fixed: unsafe_allow_html parameter name
 """
 
 import streamlit as st
@@ -343,7 +343,7 @@ def main():
                 sample_text = extract_from_region(st.session_state.pdf_file, 1, current_crop)
                 if sample_text:
                     with st.expander("Sample Text"):
-                        st.markdown(f"<div class='extracted-text'>{sample_text[:1000]}</div>", unsafe_allow_html=True)
+                        st.markdown(f'<div class="extracted-text">{sample_text[:1000]}</div>', unsafe_allow_html=True)
     
     if st.session_state.pdf_file and st.session_state.get("do_extract", False):
         st.markdown("<div class='section-header'>⚙️ Extracting All Pages...</div>", unsafe_allow_html=True)
@@ -375,15 +375,15 @@ def main():
         
         c1, c2, c3, c4 = st.columns(4)
         with c1:
-            st.markdown(f"<div class='stat-card'><div class='stat-value'>{len(df)}</div><div class='stat-label'>Total Items</div></div>", unsafe_allow_html=True)
+            st.markdown(f'<div class="stat-card"><div class="stat-value">{len(df)}</div><div class="stat-label">Total Items</div></div>', unsafe_allow_html=True)
         with c2:
             pages = df["Page"].nunique() if "Page" in df.columns else 1
-            st.markdown(f"<div class='stat-card'><div class='stat-value'>{pages}</div><div class='stat-label'>Pages</div></div>", unsafe_html=True)
+            st.markdown(f'<div class="stat-card"><div class="stat-value">{pages}</div><div class="stat-label">Pages</div></div>', unsafe_allow_html=True)
         with c3:
-            st.markdown(f"<div class='stat-card'><div class='stat-value'>{max_items}</div><div class='stat-label'>Items/Page</div></div>", unsafe_allow_html=True)
+            st.markdown(f'<div class="stat-card"><div class="stat-value">{max_items}</div><div class="stat-label">Items/Page</div></div>', unsafe_allow_html=True)
         with c4:
             materials = df["Material"].nunique() if "Material" in df.columns else 0
-            st.markdown(f"<div class='stat-card'><div class='stat-value'>{materials}</div><div class='stat-label'>Materials</div></div>", unsafe_html=True)
+            st.markdown(f'<div class="stat-card"><div class="stat-value">{materials}</div><div class="stat-label">Materials</div></div>', unsafe_allow_html=True)
         
         st.markdown("### ✏️ Edit Data")
         edited_df = st.data_editor(
@@ -400,7 +400,7 @@ def main():
             }
         )
         
-        st.markdown("<div class='section-header'>📦 Export</div>", unsafe_html=True)
+        st.markdown("<div class='section-header'>📦 Export</div>", unsafe_allow_html=True)
         col_excel, col_csv = st.columns(2)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         with col_excel:
@@ -417,7 +417,7 @@ def main():
     
     with st.expander("❓ Help"):
         st.markdown(f"""
-        **FINISHED PRODUCT v16.0**
+        **FINISHED PRODUCT v16.1**
         
         ✓ **Multi-Page**: Extracts items 1-{max_items} from EACH page
         ✓ **Red Crop Preview**: Shows extraction area with red box
