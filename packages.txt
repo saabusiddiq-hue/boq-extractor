@@ -1,6 +1,1 @@
 poppler-utils
-ges for BOQ Extractor Pro
-# These are installed via apt-get on Streamlit Cloud
-
-# PDF processing dependencies
-poppler-utils
