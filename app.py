@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import io
 import re
 import shutil
@@ -30,8 +29,7 @@ except ImportError:
     st.error("PyMuPDF not found")
     st.stop()
 
-from PIL import Image, ImageEnhance, ImageFilter
-
+from PIL import Image
 try:
     from openpyxl import Workbook
     from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
@@ -48,19 +46,25 @@ st.markdown("""
     .upload-bar { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; margin-bottom: 1rem; }
     .left-panel { background: #161b22; border: 2px solid #30363d; border-radius: 8px; padding: 1rem; }
     .right-panel { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; min-height: 600px; }
-    .extract-btn { background: linear-gradient(90deg, #238636 0%, #2ea043 100%) !important; color: white !important; font-weight: 600 !important; padding: 1rem !important; font-size: 1.1rem !important; }
-    .info-box { background: rgba(31, 111, 235, 0.1); border: 1px solid #1f6feb; border-radius: 6px; padding: 0.75rem; margin: 0.5rem 0; font-size: 0.85rem; }
-    .warning-box { background: rgba(248, 81, 73, 0.1); border: 1px solid #f85149; border-radius: 6px; padding: 0.75rem; margin: 0.5rem 0; }
     .success-box { background: rgba(35, 134, 54, 0.1); border: 1px solid #238636; border-radius: 6px; padding: 0.75rem; margin: 0.5rem 0; }
+    .warning-box { background: rgba(248, 81, 73, 0.1); border: 1px solid #f85149; border-radius: 6px; padding: 0.75rem; margin: 0.5rem 0; }
 </style>
 """, unsafe_allow_html=True)
 
 class MaterialSeparator:
-    """Separate Material from Description - Improved for Graphite Bronze"""
+    """Improved Material Separator with priority groups and custom patterns"""
 
-    def __init__(self):
+    def __init__(self, custom_patterns=None):
+        self.custom_patterns = custom_patterns or []
         # Material patterns - ordered by specificity (most specific first)
         self.material_patterns = [
+            # 1. Compound Materials (Highest Priority)
+            (r"Graphite\s+Bronze", "Graphite Bronze"),
+            (r"Bronze\s+Graphite", "Graphite Bronze"),
+            (r"PTFE\s+Lined", "PTFE Lined"),
+            (r"Graphite\s+Packing", "Graphite Packing"),
+
+            # 2. Standards & Specific Codes
             (r"Per\s+MSS\-SP\d+", "Per MSS-SP"),
             (r"MSS\-SP\d+", "MSS-SP"),
             (r"A194\s+GR\.?2H", "A194 GR.2H"),
@@ -75,54 +79,53 @@ class MaterialSeparator:
             (r"A105", "A105"),
             (r"A36\b", "A36"),
 
-            # === GRAPHITE BRONZE - Made stronger and higher priority ===
-            (r"Graphite\s+Bronze", "Graphite Bronze"),
-            (r"Graphite\s+bronze", "Graphite bronze"),
-            (r"Bronze\s+Graphite", "Bronze Graphite"),
-
-            (r"Gr\.?\s*\d+\.?\d*", "Grade"),
-            (r"CI\.?\s*\d+", "CI"),
-            (r"Cast\s+Iron", "Cast Iron"),
+            # 3. Generic Materials (Lowest Priority)
             (r"Stainless\s+Steel", "Stainless Steel"),
             (r"Carbon\s+Steel", "Carbon Steel"),
-
-            # Single words - AFTER combined Graphite Bronze
+            (r"Cast\s+Iron", "Cast Iron"),
             (r"Graphite", "Graphite"),
             (r"Bronze", "Bronze"),
             (r"PTFE", "PTFE"),
         ]
 
     def separate(self, description: str) -> Tuple[str, str]:
-        """
-        Separate Material from Description
-        Returns: (clean_description, material)
-        """
+        """Separate Material from Description"""
         if not description:
             return "", ""
 
-        # Search for material patterns from the END of the string
-        for pattern, mat_type in self.material_patterns:
-            matches = list(re.finditer(pattern, description, re.IGNORECASE))
+        full_text = description.strip()
+
+        # 1. Check Custom Patterns First
+        for pattern, mat_name in self.custom_patterns:
+            matches = list(re.finditer(pattern, full_text, re.IGNORECASE))
             if matches:
                 last_match = matches[-1]
+                material = mat_name
+                clean_desc = full_text[:last_match.start()].strip(" -:/\t")
+                clean_desc = re.sub(r"\s+Per\s*$", "", clean_desc, flags=re.IGNORECASE).strip()
+                clean_desc = re.sub(r"\s*[-:]\s*$", "", clean_desc).strip()
+                return clean_desc, material
 
-                material = last_match.group(0)
-
-                clean_desc = description[:last_match.start()].strip(" -:/\t")
+        # 2. Check Base Patterns
+        for pattern, mat_type in self.material_patterns:
+            matches = list(re.finditer(pattern, full_text, re.IGNORECASE))
+            if matches:
+                last_match = matches[-1]
+                material = mat_type
+                clean_desc = full_text[:last_match.start()].strip(" -:/\t")
                 clean_desc = re.sub(r"\s+Per\s*$", "", clean_desc, flags=re.IGNORECASE)
-                clean_desc = re.sub(r"\s*[-:]\s*$", "", clean_desc)   # Extra cleaning
+                clean_desc = re.sub(r"\s*[-:]\s*$", "", clean_desc)
                 clean_desc = clean_desc.strip()
-
                 return clean_desc, material
 
         # No material found
-        return description.strip(), ""
+        return full_text, ""
 
 class BOQExtractor:
     """Extract BOQ with proper column separation"""
 
-    def __init__(self):
-        self.material_sep = MaterialSeparator()
+    def __init__(self, custom_patterns=None):
+        self.material_sep = MaterialSeparator(custom_patterns)
 
     def extract_line(self, line: str) -> Dict:
         """Extract columns from a BOQ line"""
@@ -133,25 +136,29 @@ class BOQExtractor:
         try:
             item_no = int(parts[0])
 
+            # Qty
             qty = 1
             idx = 1
             if idx < len(parts) and parts[idx].isdigit():
                 qty = int(parts[idx])
                 idx += 1
 
+            # Fig No (can be 1 or 2 words)
             fig_no = ""
             if idx < len(parts):
                 fig_no = parts[idx]
                 idx += 1
                 if idx < len(parts):
-                    next_word = parts[idx]
-                    if next_word.lower() in ["bronze", "plate", "steel", "pad", "sheet"]:
-                        fig_no += " " + next_word
+                    next_word = parts[idx].lower()
+                    if next_word in ["bronze", "plate", "steel", "pad", "sheet"]:
+                        fig_no += " " + parts[idx]
                         idx += 1
 
+            # Remaining text = Description + Material
             remaining = parts[idx:] if idx < len(parts) else []
             full_text = " ".join(remaining)
 
+            # Separate Material
             clean_desc, material = self.material_sep.separate(full_text)
 
             return {
@@ -165,9 +172,10 @@ class BOQExtractor:
         except Exception:
             return None
 
-def extract_boq_v28(pdf_bytes: bytes, crop: Tuple, max_items: int) -> List[Dict]:
+def extract_boq_v30(pdf_bytes: bytes, crop: Tuple, max_items: int, custom_patterns=None) -> List[Dict]:
+    """Extract BOQ with Material separation"""
     items = []
-    extractor = BOQExtractor()
+    extractor = BOQExtractor(custom_patterns)
 
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
         for page_num in range(1, len(pdf.pages) + 1):
@@ -182,7 +190,7 @@ def extract_boq_v28(pdf_bytes: bytes, crop: Tuple, max_items: int) -> List[Dict]
 
             for line in lines:
                 line = line.strip()
-                if not line or not line[0].isdigit():
+                if not line or not line or not line[0].isdigit():
                     continue
 
                 result = extractor.extract_line(line)
@@ -256,47 +264,68 @@ def create_excel(df, yellow_header=True):
     wb.save(output)
     return output.getvalue()
 
-# Session init
+# ====================== SESSION STATE ======================
 if "target_bytes" not in st.session_state:
     st.session_state.target_bytes = None
 if "data" not in st.session_state:
     st.session_state.data = None
 
-st.title("📋 BOQ Extractor Pro v29 - Improved Graphite Bronze")
+st.title("📋 BOQ Extractor Pro v30 - Smart Material Separation")
 
-# TOP BAR
+# ====================== SIDEBAR ======================
+with st.sidebar:
+    st.subheader("⚙️ Extraction Settings")
+    max_items = st.slider("Maximum Items to Extract", min_value=10, max_value=500, value=50, step=10)
+    
+    st.subheader("🛠️ Custom Material Patterns")
+    st.caption("Format: regex → display name (one per line)")
+    custom_text = st.text_area(
+        "Add your own patterns",
+        value="Graphite\\s+Bronze → Graphite Bronze\nA182 F316 → A182 F316\nDuplex SS → Duplex Stainless Steel",
+        height=120
+    )
+    
+    custom_patterns = []
+    for line in custom_text.strip().split("\n"):
+        if "→" in line:
+            try:
+                pat, name = [x.strip() for x in line.split("→", 1)]
+                custom_patterns.append((pat, name))
+            except:
+                pass
+
+# ====================== MAIN UI ======================
 st.markdown("<div class='upload-bar'>", unsafe_allow_html=True)
-
 col1, arr, col2 = st.columns([2, 0.3, 2])
 
 with col1:
     st.write("📤 Upload Sample (Optional)")
-    sample_file = st.file_uploader("Sample", type=["jpg", "jpeg", "png", "pdf"], label_visibility="collapsed")
+    st.file_uploader("Sample", type=["jpg", "jpeg", "png", "pdf"], label_visibility="collapsed")
 
 with arr:
-    st.write("&nbsp;")
     st.markdown("<div style='padding-top:2rem;text-align:center;color:#58a6ff;'>→</div>", unsafe_allow_html=True)
 
 with col2:
     st.write("📄 Upload Target PDF *")
-    target_file = st.file_uploader("Target", type=["pdf"], label_visibility="collapsed")
+    target_file = st.file_uploader("Target PDF", type=["pdf"], label_visibility="collapsed")
     if target_file:
         st.session_state.target_bytes = target_file.read()
-        st.success("Target loaded")
+        st.success("✅ Target PDF loaded successfully")
 
 st.markdown("</div>", unsafe_allow_html=True)
 
-# MAIN LAYOUT
+# Main Layout
 left_col, right_col = st.columns([1, 2.5])
 
+# LEFT PANEL - Preview & Crop
 with left_col:
     st.markdown("<div class='left-panel'>", unsafe_allow_html=True)
-    st.write("👁️ Preview & Settings")
+    st.write("👁️ Preview & Crop Settings")
 
-    x = st.slider("X (Left)", 0, 100, 5)
-    y = st.slider("Y (Top)", 0, 100, 15)
-    z = st.slider("Z (Right)", 0, 100, 95)
-    w = st.slider("W (Bottom)", 0, 100, 60)
+    x = st.slider("X (Left %)", 0, 100, 5)
+    y = st.slider("Y (Top %)", 0, 100, 15)
+    z = st.slider("Z (Right %)", 0, 100, 95)
+    w = st.slider("W (Bottom %)", 0, 100, 60)
 
     if z <= x: z = min(x + 10, 100)
     if w <= y: w = min(y + 10, 100)
@@ -308,32 +337,32 @@ with left_col:
         if img:
             st.image(img, use_column_width=True)
     else:
-        st.info("Upload PDF")
+        st.info("Upload a PDF to see preview")
 
     st.markdown("</div>", unsafe_allow_html=True)
 
+# RIGHT PANEL - Extract & Results
 with right_col:
     st.markdown("<div class='right-panel'>", unsafe_allow_html=True)
 
     if st.session_state.target_bytes:
-        if st.button("🔍 EXTRACT BOQ DATA", key="extract_btn", use_container_width=True):
-            progress = st.progress(0, text="Extracting...")
-
-            items = extract_boq_v28(
-                st.session_state.target_bytes,
-                crop,
-                15
-            )
-
-            progress.empty()
+        if st.button("🔍 EXTRACT BOQ DATA", type="primary", use_container_width=True):
+            with st.spinner("Extracting BOQ data..."):
+                items = extract_boq_v30(
+                    st.session_state.target_bytes,
+                    crop,
+                    max_items,
+                    custom_patterns
+                )
 
             if items:
                 st.session_state.data = pd.DataFrame(items)
                 with_material = sum(1 for item in items if item.get("Material"))
-                st.success(f"✅ Extracted {len(items)} items! ({with_material} with Material)")
+                st.success(f"✅ Extracted {len(items)} items! ({with_material} with Material detected)")
             else:
-                st.error("No items found")
+                st.error("❌ No valid items found. Check crop area or PDF format.")
 
+    # Display Results
     if st.session_state.data is not None and not st.session_state.data.empty:
         df = st.session_state.data
 
@@ -342,19 +371,21 @@ with right_col:
         without_mat = total - with_mat
 
         cols_stats = st.columns(3)
-        cols_stats[0].metric("Total", total)
+        cols_stats[0].metric("Total Items", total)
         cols_stats[1].metric("With Material", with_mat)
         cols_stats[2].metric("No Material", without_mat)
 
         if with_mat > 0:
-            st.markdown("<div class='success-box'>✅ Material successfully separated!</div>", unsafe_allow_html=True)
+            st.markdown("<div class='success-box'>✅ Material separation working well (Graphite Bronze improved!)</div>", unsafe_allow_html=True)
+        else:
+            st.markdown("<div class='warning-box'>⚠️ No materials detected. Try adjusting crop or add custom patterns.</div>", unsafe_allow_html=True)
 
+        # Editable Table
         edited_df = st.data_editor(
             df,
             num_rows="dynamic",
             use_container_width=True,
             hide_index=True,
-            key="boq_table",
             column_config={
                 "Item": st.column_config.NumberColumn("Item", width="small"),
                 "Qty": st.column_config.NumberColumn("Qty", width="small"),
@@ -367,20 +398,31 @@ with right_col:
 
         st.session_state.data = edited_df
 
+        # Export Buttons
         st.divider()
         col_excel, col_csv = st.columns(2)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
 
         with col_excel:
-            excel = create_excel(edited_df, True)
-            st.download_button("📥 Excel", excel, f"BOQ_{ts}.xlsx",
-                             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                             use_container_width=True)
+            excel_data = create_excel(edited_df)
+            st.download_button(
+                "📥 Download Excel",
+                excel_data,
+                f"BOQ_{ts}.xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
 
         with col_csv:
-            csv = edited_df.to_csv(index=False).encode("utf-8")
-            st.download_button("📄 CSV", csv, f"BOQ_{ts}.csv", "text/csv", use_container_width=True)
+            csv_data = edited_df.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                "📄 Download CSV",
+                csv_data,
+                f"BOQ_{ts}.csv",
+                "text/csv",
+                use_container_width=True
+            )
     else:
-        st.info("BOQ data will appear here after extraction")
+        st.info("Upload PDF and click EXTRACT BOQ DATA to begin")
 
     st.markdown("</div>", unsafe_allow_html=True)
