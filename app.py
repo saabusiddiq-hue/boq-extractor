@@ -40,7 +40,7 @@ except ImportError:
     st.error("openpyxl not found")
     st.stop()
 
-st.set_page_config(page_title="BOQ Extractor Pro v27", page_icon="📋", layout="wide")
+st.set_page_config(page_title="BOQ Extractor Pro v28", page_icon="📋", layout="wide")
 
 st.markdown("""
 <style>
@@ -53,18 +53,30 @@ st.markdown("""
     .info-box { background: rgba(31, 111, 235, 0.1); border: 1px solid #1f6feb; border-radius: 6px; padding: 0.75rem; margin: 0.5rem 0; font-size: 0.85rem; }
     .fig-no-tag { background: rgba(35, 134, 54, 0.2); color: #3fb950; padding: 2px 6px; border-radius: 4px; font-weight: 500; }
     .column-detected { background: rgba(46, 160, 67, 0.2); border: 1px solid #3fb950; border-radius: 4px; padding: 4px 8px; margin: 2px; display: inline-block; font-size: 0.8rem; }
+    .anchor-tag { background: rgba(245, 158, 11, 0.2); color: #f59e0b; padding: 2px 6px; border-radius: 4px; font-weight: 500; font-size: 0.8rem; }
 </style>
 """, unsafe_allow_html=True)
 
+
 class ColumnScanner:
-    """Scan and detect column positions automatically"""
+    """Scan and detect column positions automatically with manual anchor support"""
     def __init__(self):
         self.columns = []
         self.positions = {}  # column_name -> (start, end) positions
         self.header_line = ""
+        self.material_anchors = []  # Manual material anchor points
 
-    def scan_pdf_page(self, pdf_bytes: bytes, page_num: int = 0, crop: Tuple = None) -> Dict:
-        """Scan a PDF page to detect column structure"""
+    def set_material_anchors(self, anchors: List[str]):
+        """Set manual material anchor keywords"""
+        self.material_anchors = [a.strip().upper() for a in anchors if a.strip()]
+
+    def scan_pdf_page(self, pdf_bytes: bytes, page_num: int = 0, crop: Tuple = None, 
+                      manual_anchors: List[str] = None) -> Dict:
+        """Scan a PDF page to detect column structure with optional manual anchors"""
+
+        if manual_anchors:
+            self.set_material_anchors(manual_anchors)
+
         with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
             if page_num >= len(pdf.pages):
                 page_num = 0
@@ -149,7 +161,8 @@ class ColumnScanner:
                 "header_found": header_found,
                 "columns": detected_columns,
                 "header_line": self.header_line,
-                "sample_lines": lines[:20]
+                "sample_lines": lines[:20],
+                "material_anchors_used": self.material_anchors
             }
 
     def get_column_structure(self) -> List[str]:
@@ -158,9 +171,26 @@ class ColumnScanner:
 
 
 class BOQExtractor:
-    """Extract BOQ with detected column structure"""
-    def __init__(self, column_structure: List[str] = None):
+    """Extract BOQ with detected column structure and manual material anchors"""
+    def __init__(self, column_structure: List[str] = None, material_anchors: List[str] = None):
         self.column_structure = column_structure or ["Item No", "Qty", "Fig No", "Description", "Material"]
+        self.material_anchors = material_anchors or []
+        # Default material patterns + user anchors
+        self.material_patterns = [
+            r"(A36|A105|A193|A194|A240|A516)\b",
+            r"(SS316|SS316L|SS304|SS304L)\b",
+            r"(Per\s+MSS\-SP\d+|MSS\-SP\d+)",
+            r"(Gr\.\s*\d+\.?\d*)",
+            r"(CI\.\s*\d+|Cast\s+Iron)",
+            r"(Bronze|Graphite|PTFE|Carbon\s+Steel)",
+            r"(GR\.\s*\d+[A-Z]?)",
+        ]
+        # Add custom anchors as patterns
+        for anchor in self.material_anchors:
+            if anchor:
+                # Escape special regex characters
+                safe_anchor = re.escape(anchor)
+                self.material_patterns.append(f"({safe_anchor})\b")
 
     def extract_line(self, line: str) -> Optional[Dict]:
         """Extract data from a single line based on column structure"""
@@ -212,19 +242,9 @@ class BOQExtractor:
             if remaining:
                 full_text = " ".join(remaining)
 
-                # Try to extract Material from end
-                material_patterns = [
-                    r"(A36|A105|A193|A194|A240|A516)\b",
-                    r"(SS316|SS316L|SS304|SS304L)\b",
-                    r"(Per\s+MSS\-SP\d+|MSS\-SP\d+)",
-                    r"(Gr\.\s*\d+\.?\d*)",
-                    r"(CI\.\s*\d+|Cast\s+Iron)",
-                    r"(Bronze|Graphite|PTFE|Carbon\s+Steel)",
-                    r"(GR\.\s*\d+[A-Z]?)",
-                ]
-
+                # Try to extract Material from end using patterns + anchors
                 material_found = ""
-                for pattern in material_patterns:
+                for pattern in self.material_patterns:
                     matches = list(re.finditer(pattern, full_text, re.IGNORECASE))
                     if matches:
                         last_match = matches[-1]
@@ -361,51 +381,116 @@ if "column_structure" not in st.session_state:
     st.session_state.column_structure = None
 if "target_bytes" not in st.session_state:
     st.session_state.target_bytes = None
+if "sample_bytes" not in st.session_state:
+    st.session_state.sample_bytes = None
 if "data" not in st.session_state:
     st.session_state.data = None
 if "scan_results" not in st.session_state:
     st.session_state.scan_results = None
+if "material_anchors" not in st.session_state:
+    st.session_state.material_anchors = []
 
-st.title("📋 BOQ Extractor Pro v27 - Auto Column Detection")
+st.title("📋 BOQ Extractor Pro v28 - Auto Column Detection + Material Anchors")
 
-# TOP BAR
+# TOP BAR - Upload Section
 st.markdown("<div class='upload-bar'>", unsafe_allow_html=True)
 
-col1, col2, col3 = st.columns([2, 2, 3])
+# Create tabs for Target and Sample upload
+tab1, tab2 = st.tabs(["📄 Target PDF", "📑 Sample BOQ (Optional)"])
 
-with col1:
-    st.write("📄 Upload Target PDF *")
-    target_file = st.file_uploader("Target", type=["pdf"], label_visibility="collapsed", key="target_upload")
-    if target_file:
-        st.session_state.target_bytes = target_file.read()
-        st.success("✅ PDF loaded")
+with tab1:
+    col1, col2, col3 = st.columns([2, 2, 3])
 
-with col2:
-    st.write("🔍 Auto-Detect Columns")
-    if st.session_state.target_bytes:
-        if st.button("SCAN PDF STRUCTURE", use_container_width=True, type="primary"):
-            with st.spinner("Scanning column structure..."):
-                scanner = ColumnScanner()
-                results = scanner.scan_pdf_page(st.session_state.target_bytes, crop=(5, 15, 95, 60))
-                st.session_state.scan_results = results
-                st.session_state.scanner = scanner
-                st.session_state.column_structure = scanner.get_column_structure()
+    with col1:
+        st.write("📄 Upload Target PDF *")
+        target_file = st.file_uploader("Target", type=["pdf"], label_visibility="collapsed", key="target_upload")
+        if target_file:
+            st.session_state.target_bytes = target_file.read()
+            st.success("✅ PDF loaded")
 
-                if results["header_found"]:
-                    st.success(f"✅ Found {len(results['columns'])} columns!")
-                else:
-                    st.warning("⚠️ No header found, using default structure")
+    with col2:
+        st.write("🔍 Auto-Detect Columns")
+        if st.session_state.target_bytes:
+            if st.button("SCAN PDF STRUCTURE", use_container_width=True, type="primary"):
+                with st.spinner("Scanning column structure..."):
+                    scanner = ColumnScanner()
+                    # Pass manual anchors if set
+                    manual_anchors = st.session_state.get("material_anchors", [])
+                    results = scanner.scan_pdf_page(
+                        st.session_state.target_bytes, 
+                        crop=(5, 15, 95, 60),
+                        manual_anchors=manual_anchors
+                    )
+                    st.session_state.scan_results = results
+                    st.session_state.scanner = scanner
+                    st.session_state.column_structure = scanner.get_column_structure()
+
+                    if results["header_found"]:
+                        st.success(f"✅ Found {len(results['columns'])} columns!")
+                    else:
+                        st.warning("⚠️ No header found, using default structure")
+        else:
+            st.info("Upload PDF first")
+
+    with col3:
+        if st.session_state.scan_results:
+            st.write("📊 Detected Structure:")
+            cols = st.session_state.scan_results["columns"]
+            for col in cols:
+                st.markdown(f"<span class='column-detected'>{col['name']}</span>", unsafe_allow_html=True)
+            if st.session_state.scan_results["header_line"]:
+                st.caption(f"Header: {st.session_state.scan_results['header_line'][:50]}...")
+
+            # Show if material anchors were used
+            if st.session_state.scan_results.get("material_anchors_used"):
+                st.markdown("<small>🔧 Material anchors active</small>", unsafe_allow_html=True)
+
+with tab2:
+    st.write("📑 Upload Sample BOQ (for reference or template)")
+    sample_file = st.file_uploader("Sample BOQ", type=["pdf", "png", "jpg", "jpeg"], 
+                                    label_visibility="collapsed", key="sample_upload")
+    if sample_file:
+        st.session_state.sample_bytes = sample_file.read()
+        st.success("✅ Sample loaded for reference")
+
+        # Preview sample if it's an image
+        file_type = sample_file.name.split('.')[-1].lower()
+        if file_type in ['png', 'jpg', 'jpeg']:
+            st.image(st.session_state.sample_bytes, caption="Sample BOQ Preview", use_column_width=True)
+
+st.markdown("</div>", unsafe_allow_html=True)
+
+# MATERIAL ANCHORS SECTION
+st.markdown("<div class='upload-bar' style='margin-top: 0.5rem;'>", unsafe_allow_html=True)
+anchor_col1, anchor_col2 = st.columns([2, 3])
+
+with anchor_col1:
+    st.write("⚓ Material Anchor Points (Optional)")
+    st.caption("Add keywords to help detect material columns (e.g., 'ASTM A105', 'SS304', 'Ductile Iron')")
+
+    # Text area for material anchors
+    anchors_input = st.text_area(
+        "Material Anchors (one per line)",
+        value="\n".join(st.session_state.material_anchors) if st.session_state.material_anchors else "",
+        placeholder="ASTM A105\nSS304\nDuctile Iron\nCarbon Steel",
+        height=100,
+        key="material_anchors_input"
+    )
+
+    if st.button("💾 Save Anchors", type="secondary"):
+        anchors_list = [a.strip() for a in anchors_input.split("\n") if a.strip()]
+        st.session_state.material_anchors = anchors_list
+        st.success(f"✅ Saved {len(anchors_list)} material anchors!")
+
+with anchor_col2:
+    if st.session_state.material_anchors:
+        st.write("📌 Active Material Anchors:")
+        anchor_cols = st.columns(4)
+        for idx, anchor in enumerate(st.session_state.material_anchors):
+            with anchor_cols[idx % 4]:
+                st.markdown(f"<span class='anchor-tag'>{anchor}</span>", unsafe_allow_html=True)
     else:
-        st.info("Upload PDF first")
-
-with col3:
-    if st.session_state.scan_results:
-        st.write("📊 Detected Structure:")
-        cols = st.session_state.scan_results["columns"]
-        for col in cols:
-            st.markdown(f"<span class='column-detected'>{col['name']}</span>", unsafe_allow_html=True)
-        if st.session_state.scan_results["header_line"]:
-            st.caption(f"Header: {st.session_state.scan_results['header_line'][:50]}...")
+        st.info("💡 Material anchors help the extractor identify material specifications in descriptions.\n\nExample: If your BOQ uses 'ASTM A105' as material spec, add it here.")
 
 st.markdown("</div>", unsafe_allow_html=True)
 
@@ -476,9 +561,12 @@ with right_col:
             # Use detected or manual column structure
             col_structure = st.session_state.column_structure or ["Item No", "Qty", "Fig No", "Description", "Material"]
 
+            # Get material anchors
+            material_anchors = st.session_state.get("material_anchors", [])
+
             progress.progress(30, text="Extracting data...")
 
-            extractor = BOQExtractor(col_structure)
+            extractor = BOQExtractor(col_structure, material_anchors)
             items = extractor.extract_from_pdf(
                 st.session_state.target_bytes,
                 crop,
@@ -492,6 +580,8 @@ with right_col:
             if items:
                 st.session_state.data = pd.DataFrame(items)
                 st.success(f"✅ Extracted {len(items)} items from PDF!")
+                if material_anchors:
+                    st.caption(f"🔧 Used {len(material_anchors)} material anchor(s) for detection")
             else:
                 st.error("❌ No items found. Try adjusting crop area or check PDF format.")
 
@@ -516,7 +606,7 @@ with right_col:
             num_rows="dynamic",
             use_container_width=True,
             hide_index=True,
-            key="boq_table_v27",
+            key="boq_table_v28",
             column_config={
                 "Item": st.column_config.NumberColumn("Item", width="small"),
                 "Qty": st.column_config.NumberColumn("Qty", width="small"),
